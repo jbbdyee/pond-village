@@ -3,9 +3,9 @@
 > 한 번에 한 항목씩. 끝나면 체크하고 멈춘다.
 
 ## 지금 (P0 · P1)
-- [x] uv 프로젝트 생성, 폴더 구조 만들기 (CLAUDE.md 참고)
+- [x] uv 프로젝트 생성, 폴더 구조 만들기 (AGENTS.md 참고)
 - [x] `.gitignore`에 `runs/`, `.env` 추가
-- [ ] Ollama 설치 + 7~8B급 모델 하나 받기 (직접)
+- [x] Ollama 설치 + 7~8B급 모델 하나 받기 (이미 설치돼 있었음: Ubuntu(WSL) 안의 Ollama, `qwen2.5vl:7b` 8.3B · `gemma3:4b`. OpenAI 호환 주소로 응답 확인)
 - [ ] `llm.py` 최소 버전: OpenAI 호환 클라이언트로 ping (`--ping`)
 - [ ] `configs/base.yaml`: 연못·경제 숫자, 페르소나 5개
 - [ ] `world.py`: Pond, Agent, World 데이터 구조
