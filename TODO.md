@@ -6,7 +6,7 @@
 - [x] uv 프로젝트 생성, 폴더 구조 만들기 (AGENTS.md 참고)
 - [x] `.gitignore`에 `runs/`, `.env` 추가
 - [x] Ollama 설치 + 7~8B급 모델 하나 받기 (이미 설치돼 있었음: Ubuntu(WSL) 안의 Ollama, `qwen2.5vl:7b` 8.3B · `gemma3:4b`. OpenAI 호환 주소로 응답 확인)
-- [ ] `llm.py` 최소 버전: OpenAI 호환 클라이언트로 ping (`--ping`)
+- [x] `llm.py` 최소 버전: OpenAI 호환 클라이언트로 ping (`--ping`) (qwen2.5vl:7b가 약 4.4초 만에 "안녕하세요!" 응답. 로컬 주소가 아니면 호출 거절)
 - [ ] `configs/base.yaml`: 연못·경제 숫자, 페르소나 5개
 - [ ] `world.py`: Pond, Agent, World 데이터 구조
 - [ ] `rules.py`: 어획 배분
