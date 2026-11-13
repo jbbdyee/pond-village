@@ -1,0 +1,12 @@
+# 실행 결과 / 비밀값
+runs/
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# OS
+.DS_Store
