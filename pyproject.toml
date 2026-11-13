@@ -1,0 +1,15 @@
+[project]
+name = "pondvillage"
+version = "0.1.0"
+description = "LLM 에이전트 5명이 공동 연못을 나눠 쓰는 어촌 마을 시뮬레이션"
+requires-python = ">=3.11"
+dependencies = []
+
+[build-system]
+requires = ["uv_build>=0.13.8,<0.14.0"]
+build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
