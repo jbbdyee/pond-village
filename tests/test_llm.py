@@ -51,6 +51,20 @@ def test_chat_refuses_non_local_address():
     assert client.calls == []
 
 
+def test_chat_json_mode_asks_for_json_object():
+    client = FakeClient(text='{"action": "fish", "amount": 10, "reason": "r"}')
+    llm.chat([{"role": "user", "content": "hi"}], json_mode=True, client=client)
+
+    assert client.calls[0]["response_format"] == {"type": "json_object"}
+
+
+def test_chat_without_json_mode_sends_no_response_format():
+    client = FakeClient()
+    llm.chat([{"role": "user", "content": "hi"}], client=client)
+
+    assert "response_format" not in client.calls[0]
+
+
 @pytest.mark.parametrize(
     ("base_url", "expected"),
     [

@@ -22,7 +22,7 @@ run:
 
 llm:
   base_url: "http://localhost:11434/v1"   # Ollama 로컬
-  model: "qwen2.5vl:7b"                   # 임시값 (TODO "결정 필요")
+  model: "qwen2.5:7b"                     # 개발용 (2026-11-15 3개 비교 후 결정, NOTES 참고)
   temperature: 0.7
 
 # 페르소나는 실험 내내 고정한다 (조건 간 비교용).

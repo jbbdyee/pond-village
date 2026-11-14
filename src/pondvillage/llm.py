@@ -17,8 +17,8 @@ from urllib.parse import urlparse
 from openai import OpenAI, OpenAIError
 
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
-# 임시 기본값. 개발용 모델이 정해지면 configs/base.yaml에서 읽는다.
-DEFAULT_MODEL = "qwen2.5vl:7b"
+# 개발용 기본 모델 (2026-11-15 결정, configs/base.yaml과 같게 둔다).
+DEFAULT_MODEL = "qwen2.5:7b"
 LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
 TIMEOUT_SECONDS = 120.0
 
@@ -53,17 +53,24 @@ def chat(
     model: str = DEFAULT_MODEL,
     base_url: str = DEFAULT_BASE_URL,
     temperature: float = 0.0,
+    json_mode: bool = False,
     client: OpenAI | None = None,
 ) -> LLMResult:
-    """LLM에 한 번 묻는다. 로컬 주소가 아니면 호출하지 않고 멈춘다."""
+    """LLM에 한 번 묻는다. 로컬 주소가 아니면 호출하지 않고 멈춘다.
+
+    json_mode: True면 "JSON 객체 하나로만 답하라"고 서버에 요청한다
+               (OpenAI 호환 `response_format={"type": "json_object"}`, Ollama도 지원).
+               답을 dict로 바꾸는 일과 재시도는 이 옵션과 별개로 P4에서 붙인다.
+    """
     if not is_local(base_url):
         raise PaidCallNotAllowed(
             f"로컬 주소가 아닙니다: {base_url} (유료 호출은 --paid와 cost_cap_usd가 생긴 뒤에만)"
         )
     client = client or make_client(base_url)
     started = time.perf_counter()
+    extra = {"response_format": {"type": "json_object"}} if json_mode else {}
     response = client.chat.completions.create(
-        model=model, messages=messages, temperature=temperature
+        model=model, messages=messages, temperature=temperature, **extra
     )
     latency_ms = round((time.perf_counter() - started) * 1000)
     usage = response.usage
