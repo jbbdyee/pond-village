@@ -275,7 +275,7 @@ def test_unknown_bot_kind_stops():
 
 
 def test_cli_prints_table_with_names(capsys):
-    assert main(["--config", str(BASE_YAML), "--days", "2", "--bot", "coop"]) == 0
+    assert main(["--config", str(BASE_YAML), "--days", "2", "--bot", "coop", "--no-log"]) == 0
     out = capsys.readouterr().out
     for name in [a.name for a in load_config(BASE_YAML).agents]:
         assert name in out
@@ -283,7 +283,7 @@ def test_cli_prints_table_with_names(capsys):
 
 
 def test_cli_baseline_prints_summary(capsys):
-    assert main(["--config", str(BASE_YAML), "--baseline", "--seeds", "2"]) == 0
+    assert main(["--config", str(BASE_YAML), "--baseline", "--seeds", "2", "--no-log"]) == 0
     out = capsys.readouterr().out
     assert "탐욕: 2번 중 연못 붕괴 2" in out
     assert "협력: 2번 중 정한 날짜까지 버팀 2" in out
@@ -291,6 +291,6 @@ def test_cli_baseline_prints_summary(capsys):
 
 
 def test_cli_greedy_reports_collapse(capsys):
-    main(["--config", str(BASE_YAML), "--bot", "greedy"])
+    main(["--config", str(BASE_YAML), "--bot", "greedy", "--no-log"])
     out = capsys.readouterr().out
     assert "붕괴" in out and "(1일 진행)" in out

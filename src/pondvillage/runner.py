@@ -9,18 +9,22 @@
 
 실행 예:
     uv run python -m pondvillage.runner --config configs/base.yaml --days 5 --bot greedy
+    → 결과가 runs/<시각>_greedy_s1.db에 저장된다 (--no-log면 저장 안 함)
 """
 
 from __future__ import annotations
 
 import argparse
 import random
+import sqlite3
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 
 from pondvillage import rules
 from pondvillage.actions import INSPECT, FishDecision, catch_cap, validate_fish_action
 from pondvillage.agents.base import BaseAgent, Observation
 from pondvillage.agents.scripted import CooperativeBot, GreedyBot, RandomBot
+from pondvillage.logger import STATUS_ERROR, RunLogger, make_run_id, make_stamp, open_db
 from pondvillage.world import Config, World, load_config
 
 # 끝난 이유
@@ -62,7 +66,7 @@ class FishTurn:
 
 @dataclass
 class DayResult:
-    """하루 동안 일어난 일. 콘솔 표와 (다음 항목) SQLite 로그가 이걸 읽는다."""
+    """하루 동안 일어난 일. 콘솔 표와 SQLite 로그(`logger.py`)가 이걸 읽는다."""
 
     day: int
     stock_start: int
@@ -157,11 +161,33 @@ def run_day(
     )
 
 
-def run(world: World, agents: dict[str, BaseAgent], seed: int, days: int | None = None) -> RunResult:
+def run(
+    world: World,
+    agents: dict[str, BaseAgent],
+    seed: int,
+    days: int | None = None,
+    logger: RunLogger | None = None,
+) -> RunResult:
     """끝날 때까지 하루씩 돌린다. SPEC 8장 종료 조건: 일수 도달, 연못 붕괴, 모두 떠남.
 
+    logger를 주면 매일 저녁 하루 결과를 기록하고, 끝나면 끝난 이유를 runs.status에 적는다.
+    중간에 오류가 나면 status를 error로 적고 오류는 그대로 올려 보낸다.
     (비용 상한은 LLM 어부가 생기는 P4에서 붙인다.)
     """
+    try:
+        result = _run_days(world, agents, seed, days, logger)
+    except Exception:
+        if logger is not None:
+            logger.finish(STATUS_ERROR)
+        raise
+    if logger is not None:
+        logger.finish(result.end_reason)
+    return result
+
+
+def _run_days(
+    world: World, agents: dict[str, BaseAgent], seed: int, days: int | None, logger: RunLogger | None
+) -> RunResult:
     days = world.config.days if days is None else days
     estimate_rng = make_rng(seed, "estimate")
     results: list[DayResult] = []
@@ -169,6 +195,8 @@ def run(world: World, agents: dict[str, BaseAgent], seed: int, days: int | None 
     while True:
         result = run_day(world, agents, estimate_rng, yesterday)
         results.append(result)
+        if logger is not None:
+            logger.log_day(result, world)
         if result.collapsed:
             return RunResult(results, END_COLLAPSED)
         if not world.alive_agents():
@@ -227,7 +255,10 @@ def format_table(world: World, result: RunResult) -> str:
 
 @dataclass(frozen=True)
 class RunSummary:
-    """실행 한 번을 한 줄로 줄인 것. 기준선 비교표와 (다음 항목) SQLite 로그가 쓴다."""
+    """실행 한 번을 한 줄로 줄인 것. 기준선 비교표가 쓴다.
+
+    DB에는 끝난 이유만 runs.status로 남는다. 나머지는 days·agent_days에서 다시 계산할 수 있다.
+    """
 
     bot: str
     seed: int
@@ -253,15 +284,34 @@ def summarize(bot: str, seed: int, result: RunResult) -> RunSummary:
     )
 
 
+BOT_MODEL = "scripted"  # runs.model 칸: 규칙 기반 봇 (LLM 아님)
+
+
 def run_baseline(
-    config: Config, seeds: list[int], kinds: tuple[str, ...] = BOT_KINDS, days: int | None = None
+    config: Config,
+    seeds: list[int],
+    kinds: tuple[str, ...] = BOT_KINDS,
+    days: int | None = None,
+    conn: sqlite3.Connection | None = None,
+    config_name: str = "base",
+    stamp: str | None = None,
 ) -> list[RunSummary]:
-    """봇 종류마다, 시드마다 새 마을을 만들어 끝까지 돌리고 한 줄 요약을 모은다."""
+    """봇 종류마다, 시드마다 새 마을을 만들어 끝까지 돌리고 한 줄 요약을 모은다.
+
+    conn을 주면 모든 실행을 그 DB 파일 하나에 기록한다 (run_id로 구분).
+    """
+    stamp = stamp or make_stamp()
     out: list[RunSummary] = []
     for kind in kinds:
         for seed in seeds:
             world = World.from_config(config)
-            result = run(world, build_bots(config, kind, seed), seed, days=days)
+            logger = None
+            if conn is not None:
+                logger = RunLogger.start(
+                    conn, make_run_id(stamp, kind, seed),
+                    config_name=config_name, condition=kind, seed=seed, model=BOT_MODEL,
+                )
+            result = run(world, build_bots(config, kind, seed), seed, days=days, logger=logger)
             out.append(summarize(kind, seed, result))
     return out
 
@@ -300,19 +350,51 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=None, help="시드 (기본: 설정 값)")
     parser.add_argument("--baseline", action="store_true", help="봇 3종 × 시드 1~N 비교표")
     parser.add_argument("--seeds", type=int, default=10, help="--baseline에서 돌릴 시드 수 (기본 10)")
+    parser.add_argument("--runs-dir", default="runs", help="DB 파일을 둘 폴더 (기본 runs)")
+    parser.add_argument("--no-log", action="store_true", help="DB 파일에 저장하지 않는다")
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
+    config_name = Path(args.config).stem
+    stamp = make_stamp()
+    runs_dir = Path(args.runs_dir)
+
     if args.baseline:
-        rows = run_baseline(config, list(range(1, args.seeds + 1)), days=args.days)
+        db_path = runs_dir / f"{stamp}_baseline.db"
+        conn = None if args.no_log else open_db(db_path)
+        try:
+            rows = run_baseline(
+                config, list(range(1, args.seeds + 1)), days=args.days,
+                conn=conn, config_name=config_name, stamp=stamp,
+            )
+        finally:
+            if conn is not None:
+                conn.close()
         print(f"기준선: 봇 {len(BOT_KINDS)}종 × 시드 1~{args.seeds}")
         print(format_baseline(rows))
+        if conn is not None:
+            print(f"\n저장: {db_path}")
         return 0
+
     seed = config.seed if args.seed is None else args.seed
     world = World.from_config(config)
-    result = run(world, build_bots(config, args.bot, seed), seed, days=args.days)
+    run_id = make_run_id(stamp, args.bot, seed)
+    db_path = runs_dir / f"{run_id}.db"
+    conn = None if args.no_log else open_db(db_path)
+    try:
+        logger = None
+        if conn is not None:
+            logger = RunLogger.start(
+                conn, run_id, config_name=config_name, condition=args.bot, seed=seed, model=BOT_MODEL
+            )
+        result = run(world, build_bots(config, args.bot, seed), seed, days=args.days, logger=logger)
+    finally:
+        if conn is not None:
+            conn.close()
     print(f"봇: {args.bot} · 시드: {seed}")
     print(format_table(world, result))
+    if conn is not None:
+        print(f"\n저장: {db_path}")
     return 0
 
 
