@@ -26,6 +26,9 @@ class Observation:
     money: int
     stock_estimate: int  # 아침에 공개된 연못 추정치
     yesterday_total_catch: int | None = None  # 1일차에는 전날이 없어 None
+    # 연못을 확인(inspect_pond)한 어부에게 다시 물을 때만 채운다. 평소에는 None.
+    # 이때 어획 상한은 절반이다 (검사는 actions.py).
+    exact_stock: int | None = None
 
 
 def fish_action(amount: int, reason: str) -> dict:
