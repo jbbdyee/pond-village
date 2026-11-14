@@ -63,7 +63,7 @@ LLM은 "무엇을 하고 싶은지"만 말합니다.
 - [ ] P2 스크립트 봇 + 기준선 (탐욕 → 붕괴, 협력 → 유지)
 - [ ] P3 SQLite 로그
 - [ ] P4~P6 LLM 에이전트 (어획 → 기억·일기 → 광장 대화)
-- [ ] P7 Streamlit 대시보드
+- [ ] P7 마을 화면 (대화·일기 재생)
 - [ ] P8 규칙 투표
 - [ ] P9~P10 1단계 실험
 - [ ] P11~P12 2단계 소문 실험
@@ -72,7 +72,7 @@ LLM은 "무엇을 하고 싶은지"만 말합니다.
 
 - Python 3.11+, `uv`
 - LLM: OpenAI 호환 API (개발: Ollama 로컬 / 본 실험: 저가 유료 모델)
-- SQLite · Streamlit · pytest
+- SQLite · 게임풍 HTML 화면(Canvas) · pytest
 
 ## 문서
 

@@ -16,7 +16,7 @@ LLM 에이전트 5명이 공동 연못 하나를 나눠 쓰는 어촌 마을 시
   - 본 실험: 저가 유료 모델 (OpenRouter 등) — `base_url`과 `model`만 바꿈
 - 저장: SQLite (`runs/*.db`)
 - 설정: YAML (`configs/`)
-- 대시보드: Streamlit
+- 대시보드: 게임풍 HTML 한 장 (`dashboard/village.html` 틀 + `export.py`가 기록을 넣어 `runs/village.html` 생성. 서버·새 라이브러리 없음)
 - 테스트: pytest
 
 ## 폴더 구조
@@ -38,7 +38,8 @@ pond-village/
     rumor.py      # (2단계) 소문 주입
     runner.py     # 하루 단계 진행, 실험 실행
     logger.py     # SQLite 기록
-  dashboard/app.py
+    export.py     # 기록 → 마을 화면(HTML) 만들기
+  dashboard/village.html  # 마을 화면 틀 (데이터는 export.py가 넣음)
   tests/
   runs/          # 실행 결과 (git 제외)
 ```
