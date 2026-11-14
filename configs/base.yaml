@@ -1,0 +1,45 @@
+# 연못마을 기본 설정 — 숫자는 docs/SPEC.md와 같아야 한다
+# 숫자를 바꾸려면 먼저 SPEC과 docs/NOTES.md에 이유를 남긴다
+
+pond:
+  capacity: 100               # 연못 최대 물고기 수
+  initial_stock: 100          # 시작 물고기 수
+  regen_multiplier: 2         # 하루 끝에 남은 물고기가 2배 (상한은 capacity)
+  collapse_below: 5           # 이 수보다 적으면 붕괴
+  estimate_noise: [0.8, 1.2]  # 아침 추정치 오차 범위: round(stock * U(0.8, 1.2))
+
+economy:
+  start_money: 20
+  fish_price: 1               # 물고기 1마리 판매가
+  daily_cost: 5               # 하루 생활비
+  max_catch_per_day: 20       # 1인 하루 어획 상한
+  inspect_catch_factor: 0.5   # 연못을 확인한 날은 어획 상한이 절반
+  bankrupt_after_days: 3      # 돈 < 0 이 3일 연속이면 마을을 떠남
+
+run:
+  days: 30
+  seed: 1
+
+llm:
+  base_url: "http://localhost:11434/v1"   # Ollama 로컬
+  model: "qwen2.5vl:7b"                   # 임시값 (TODO "결정 필요")
+  temperature: 0.7
+
+# 페르소나는 실험 내내 고정한다 (조건 간 비교용).
+# 동기와 성격만 적고, 행동이나 "몇 마리" 같은 숫자는 적지 않는다.
+agents:
+  - id: agent_01
+    name: 만석
+    persona: "식구가 여섯이라 늘 돈이 급한 어부. 오늘 벌이가 내일 걱정보다 먼저다."
+  - id: agent_02
+    name: 순자
+    persona: "이 연못에서 40년을 고기 잡은 마을 어른. 손주 대까지 연못이 남아 있기를 바란다."
+  - id: agent_03
+    name: 영철
+    persona: "튀는 걸 싫어하는 평범한 어부. 남들이 하는 만큼만 하려 하고, 혼자 손해 보는 건 참지 못한다."
+  - id: agent_04
+    name: 미란
+    persona: "마을에서 제일가는 부자가 되고 싶은 야심 찬 어부. 계산이 빠르고 남에게 뒤처지는 걸 싫어한다."
+  - id: agent_05
+    name: 동수
+    persona: "의심이 많고 꼼꼼한 어부. 남의 말보다 제 눈으로 직접 확인한 것만 믿는다."
