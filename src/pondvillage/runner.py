@@ -222,15 +222,92 @@ def format_table(world: World, result: RunResult) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- 기준선 (봇 종류 × 시드 비교)
+
+
+@dataclass(frozen=True)
+class RunSummary:
+    """실행 한 번을 한 줄로 줄인 것. 기준선 비교표와 (다음 항목) SQLite 로그가 쓴다."""
+
+    bot: str
+    seed: int
+    end_reason: str
+    days: int  # 진행한 날 수
+    stock_end: int  # 마지막 날 저녁 재고
+    total_catch: int  # 마을 전체 누적 어획
+    left: int  # 떠난 어부 수
+    avg_money: float  # 마지막 날 평균 돈 (떠난 어부 포함)
+
+
+def summarize(bot: str, seed: int, result: RunResult) -> RunSummary:
+    last = result.days[-1]
+    return RunSummary(
+        bot=bot,
+        seed=seed,
+        end_reason=result.end_reason,
+        days=len(result.days),
+        stock_end=last.stock_end,
+        total_catch=sum(d.total_catch for d in result.days),
+        left=sum(1 for alive in last.alive.values() if not alive),
+        avg_money=sum(last.money.values()) / len(last.money),
+    )
+
+
+def run_baseline(
+    config: Config, seeds: list[int], kinds: tuple[str, ...] = BOT_KINDS, days: int | None = None
+) -> list[RunSummary]:
+    """봇 종류마다, 시드마다 새 마을을 만들어 끝까지 돌리고 한 줄 요약을 모은다."""
+    out: list[RunSummary] = []
+    for kind in kinds:
+        for seed in seeds:
+            world = World.from_config(config)
+            result = run(world, build_bots(config, kind, seed), seed, days=days)
+            out.append(summarize(kind, seed, result))
+    return out
+
+
+BOT_LABELS = {"greedy": "탐욕", "coop": "협력", "random": "랜덤"}
+
+
+def format_baseline(rows: list[RunSummary]) -> str:
+    """시드별 한 줄 + 봇 종류별 요약."""
+    header = ["봇", "시드", "끝난 이유", "일수", "저녁재고", "총어획", "떠남", "평균돈"]
+    table = [header]
+    for r in rows:
+        table.append([
+            BOT_LABELS.get(r.bot, r.bot), str(r.seed), END_LABELS[r.end_reason], str(r.days),
+            str(r.stock_end), str(r.total_catch), str(r.left), f"{r.avg_money:.1f}",
+        ])
+    widths = [max(len(t[i]) for t in table) + 2 for i in range(len(header))]
+    lines = ["".join(cell.rjust(w) for cell, w in zip(t, widths)) for t in table]
+    lines.append("")
+    lines.append("요약")
+    for kind in dict.fromkeys(r.bot for r in rows):
+        group = [r for r in rows if r.bot == kind]
+        n = len(group)
+        counts = {reason: sum(1 for r in group if r.end_reason == reason) for reason in END_LABELS}
+        reasons = ", ".join(f"{END_LABELS[k]} {v}" for k, v in counts.items() if v)
+        avg_days = sum(r.days for r in group) / n
+        lines.append(f"  {BOT_LABELS.get(kind, kind)}: {n}번 중 {reasons} · 평균 {avg_days:.1f}일")
+    return "\n".join(lines)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="봇 마을을 돌려 날짜별 표를 찍는다 (LLM 없음, 비용 0원).")
     parser.add_argument("--config", default="configs/base.yaml")
     parser.add_argument("--days", type=int, default=None, help="진행할 날 수 (기본: 설정 값)")
     parser.add_argument("--bot", choices=BOT_KINDS, default="coop", help="5명 모두 이 봇으로")
     parser.add_argument("--seed", type=int, default=None, help="시드 (기본: 설정 값)")
+    parser.add_argument("--baseline", action="store_true", help="봇 3종 × 시드 1~N 비교표")
+    parser.add_argument("--seeds", type=int, default=10, help="--baseline에서 돌릴 시드 수 (기본 10)")
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
+    if args.baseline:
+        rows = run_baseline(config, list(range(1, args.seeds + 1)), days=args.days)
+        print(f"기준선: 봇 {len(BOT_KINDS)}종 × 시드 1~{args.seeds}")
+        print(format_baseline(rows))
+        return 0
     seed = config.seed if args.seed is None else args.seed
     world = World.from_config(config)
     result = run(world, build_bots(config, args.bot, seed), seed, days=args.days)

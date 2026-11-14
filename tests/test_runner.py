@@ -18,7 +18,9 @@ from pondvillage.runner import (
     make_rng,
     morning_estimate,
     run,
+    run_baseline,
     run_day,
+    summarize,
 )
 from pondvillage.world import World, config_from_dict, load_config
 
@@ -213,6 +215,35 @@ def test_days_argument_overrides_config():
     assert r.end_reason == END_DAYS and [d.day for d in r.days] == [1, 2, 3]
 
 
+# ---------------------------------------------------------------- 기준선 (시드 1~10)
+
+SEEDS = list(range(1, 11))
+
+
+def test_baseline_greedy_collapses_on_every_seed():
+    rows = run_baseline(make_world().config, SEEDS, kinds=("greedy",))
+    assert all(r.end_reason == END_COLLAPSED and r.days == 1 and r.stock_end == 0 for r in rows)
+
+
+def test_baseline_coop_lasts_30_days_on_every_seed():
+    rows = run_baseline(make_world().config, SEEDS, kinds=("coop",))
+    assert all(r.end_reason == END_DAYS and r.days == 30 and r.stock_end == 100 for r in rows)
+    assert all(r.left == 0 and r.avg_money == 170 and r.total_catch == 1500 for r in rows)
+
+
+def test_baseline_random_is_reproducible():
+    config = make_world().config
+    assert run_baseline(config, SEEDS, kinds=("random",)) == run_baseline(config, SEEDS, kinds=("random",))
+
+
+def test_summarize_counts_departed_and_money():
+    world = make_world()
+    r = run(world, all_bots(lambda i: CooperativeBot(i, amount=0)), seed=1)
+    s = summarize("idle", 1, r)
+    assert s.left == 5 and s.days == 7 and s.total_catch == 0
+    assert s.avg_money == r.days[-1].money["a1"]
+
+
 # ---------------------------------------------------------------- 재현성
 
 
@@ -249,6 +280,14 @@ def test_cli_prints_table_with_names(capsys):
     for name in [a.name for a in load_config(BASE_YAML).agents]:
         assert name in out
     assert "정한 날짜까지 버팀 (2일 진행)" in out
+
+
+def test_cli_baseline_prints_summary(capsys):
+    assert main(["--config", str(BASE_YAML), "--baseline", "--seeds", "2"]) == 0
+    out = capsys.readouterr().out
+    assert "탐욕: 2번 중 연못 붕괴 2" in out
+    assert "협력: 2번 중 정한 날짜까지 버팀 2" in out
+    assert "랜덤: 2번 중" in out
 
 
 def test_cli_greedy_reports_collapse(capsys):
