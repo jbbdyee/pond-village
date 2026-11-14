@@ -373,3 +373,115 @@ def test_sustainable_fishing_keeps_pond_full_for_30_days():
         assert run_pond_day(world, {"a1": 10, "a2": 10, "a3": 10}) is False
         assert world.pond.stock == 100
     assert all(a.alive for a in world.agents)
+
+
+# ---------------------------------------------------------------- 설정 숫자 따르기·정산 전체 흐름
+
+
+def make_custom_world(pond: dict | None = None, economy: dict | None = None) -> World:
+    """RAW에서 일부 숫자만 바꾼 마을. 규칙이 숫자를 코드에 박아 두지 않았는지 볼 때 쓴다."""
+    raw = {
+        **RAW,
+        "pond": {**RAW["pond"], **(pond or {})},
+        "economy": {**RAW["economy"], **(economy or {})},
+    }
+    return World.from_config(config_from_dict(raw))
+
+
+@pytest.mark.parametrize(
+    ("left", "next_morning", "collapsed"),
+    [(15, 45, False), (25, 60, False), (10, 30, False), (9, 9, True)],
+)
+def test_pond_rules_follow_config_numbers(left, next_morning, collapsed):
+    """연못 크기 60, 재생 3배, 10마리 미만이면 붕괴로 바꾸면 규칙도 그 숫자대로 움직인다."""
+    world = make_custom_world(
+        pond={"capacity": 60, "initial_stock": 60, "regen_multiplier": 3, "collapse_below": 10}
+    )
+    assert pond_end_of_day(world, left) == next_morning
+    assert world.pond.collapsed is collapsed
+
+
+def test_economy_rules_follow_config_numbers():
+    """시작 돈 4, 1마리 2, 생활비 3, 빚 2일이면 떠남으로 바꾸면 그 숫자대로 정산한다."""
+    world = make_custom_world(
+        economy={"start_money": 4, "fish_price": 2, "daily_cost": 3, "bankrupt_after_days": 2}
+    )
+    a1, a2 = world.agents[0], world.agents[1]
+
+    # a1은 매일 0마리: 4 -> 1 -> -2(1일째) -> -5(2일째, 떠남)
+    assert end_of_day(world, {"a2": 5, "a3": 5}) == []
+    assert (a1.money, a2.money) == (1, 11)  # a2: 4 + 5*2 - 3
+    assert end_of_day(world, {"a2": 5, "a3": 5}) == []
+    assert (a1.money, a1.debt_days) == (-2, 1)
+    assert end_of_day(world, {"a2": 5, "a3": 5}) == ["a1"]
+    assert (a1.money, a1.debt_days, a1.alive) == (-5, 2, False)
+
+
+def test_collapse_and_bankruptcy_on_the_same_day():
+    """정산 순서(배분 -> 빼기 -> 판매·생활비 -> 파산 -> 붕괴 -> 재생)대로 둘 다 기록된다."""
+    world = make_world()
+    world.pond.stock = 30
+    a1, a2, a3 = world.agents
+    a1.money, a1.debt_days = -10, 2  # 오늘 또 빚지면 3일째
+
+    catches = allocate_catch({"a1": 0, "a2": 20, "a3": 20}, world.pond.stock)
+    remove_catch(world, catches)
+    left = end_of_day(world, catches)
+    collapsed = check_collapse(world)
+    regenerate(world)
+
+    assert catches == {"a1": 0, "a2": 15, "a3": 15}
+    assert left == ["a1"] and a1.alive is False and a1.money == -15
+    assert a2.money == a3.money == 30  # 20 + 15 - 5: 붕괴한 날에도 잡은 건 판다
+    assert collapsed is True
+    assert world.pond.stock == 0  # 붕괴했으니 재생하지 않는다
+
+
+def run_30_days(world: World, wants: dict[str, int]) -> list[tuple]:
+    """살아 있는 어부만 요청을 내며 30일을 돈다. 날마다 (재고, 돈, 생존) 기록을 돌려준다."""
+    history = []
+    for _ in range(30):
+        requests = {a.id: wants[a.id] for a in world.alive_agents()}
+        run_pond_day(world, requests)
+        history.append(
+            (
+                world.pond.stock,
+                tuple(a.money for a in world.agents),
+                tuple(a.alive for a in world.agents),
+            )
+        )
+    return history
+
+
+def test_same_input_gives_same_result():
+    """규칙 엔진에는 무작위가 없다: 같은 30일을 두 번 돌리면 날마다 상태가 똑같다."""
+    wants = {"a1": 20, "a2": 15, "a3": 0}  # a3는 아무것도 안 잡아 7일째 떠난다
+
+    first = run_30_days(make_world(), wants)
+    second = run_30_days(make_world(), wants)
+
+    assert first == second
+    assert first[5][2] == (True, True, True)
+    assert first[6][2] == (True, True, False)
+
+
+def test_empty_village_does_not_break_settlement():
+    """모두 떠난 마을에서도 정산 함수들은 멈추지 않는다. 아무도 안 잡았으니 연못은 그대로."""
+    world = make_world()
+    for a in world.agents:
+        a.alive = False
+
+    assert allocate_catch({}, world.pond.stock) == {}
+    assert check_bankruptcy(world) == []
+    assert run_pond_day(world, {}) is False
+    assert world.pond.stock == 100
+
+
+def test_free_rider_is_not_noticed_by_the_pond():
+    """한 명이 20, 두 명이 15씩(합계 50): 연못은 30일 내내 100이고, 많이 잡은 사람만 돈이 더 쌓인다."""
+    world = make_world()
+    for _ in range(30):
+        assert run_pond_day(world, {"a1": 20, "a2": 15, "a3": 15}) is False
+        assert world.pond.stock == 100
+
+    assert [a.money for a in world.agents] == [20 + 15 * 30, 20 + 10 * 30, 20 + 10 * 30]
