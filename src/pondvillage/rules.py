@@ -2,7 +2,7 @@
 
 LLM도, 무작위도 쓰지 않는다. 같은 입력이면 언제나 같은 결과가 나온다.
 - 계산만 하는 함수(`allocate_catch`)는 입력을 고치지 않고 답만 돌려준다.
-- 정산 함수(`settle_money`, `check_bankruptcy`)는 `World`의 어부 상태를 직접 고친다.
+- 정산 함수(`settle_money`, `check_bankruptcy`, `remove_catch`, `check_collapse`, `regenerate`)는 `World`의 어부·연못 상태를 직접 고친다.
 """
 
 from __future__ import annotations
@@ -76,3 +76,40 @@ def check_bankruptcy(world: World) -> list[str]:
             agent.alive = False
             left.append(agent.id)
     return left
+
+
+def remove_catch(world: World, catches: dict[str, int]) -> None:
+    """잡힌 물고기를 연못 재고에서 뺀다. SPEC 3장 정산의 어획 배분 직후.
+
+    catches: 어부 id -> 실제로 잡은 마릿수 (`allocate_catch`의 결과).
+    합계가 재고보다 많거나 음수가 있으면 앞 단계의 실수이므로 `ValueError`로 멈춘다.
+    """
+    for agent_id, amount in catches.items():
+        if amount < 0:
+            raise ValueError(f"잡은 마릿수는 0 이상이어야 합니다: {agent_id}={amount}")
+    total = sum(catches.values())
+    if total > world.pond.stock:
+        raise ValueError(f"재고({world.pond.stock})보다 많이 잡을 수 없습니다: 합계 {total}")
+    world.pond.stock -= total
+
+
+def check_collapse(world: World) -> bool:
+    """남은 물고기가 기준(5마리)보다 적으면 연못을 붕괴로 표시한다. SPEC 1장 "붕괴".
+
+    재생 **전에** 부른다 (붕괴한 연못은 재생하지 않는다. NOTES 2026-11-14 참고).
+    한 번 붕괴하면 계속 붕괴 상태다. 붕괴했으면 True를 돌려준다.
+    """
+    if world.pond.stock < world.config.pond.collapse_below:
+        world.pond.collapsed = True
+    return world.pond.collapsed
+
+
+def regenerate(world: World) -> None:
+    """남은 물고기를 배수(2배)만큼 늘린다. 상한은 연못 크기(100). SPEC 1장 "재생".
+
+    붕괴한 연못은 그대로 둔다. `check_collapse` 다음에 하루 한 번 부른다.
+    """
+    pond = world.pond
+    if pond.collapsed:
+        return
+    pond.stock = min(pond.capacity, pond.stock * world.config.pond.regen_multiplier)

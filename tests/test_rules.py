@@ -1,8 +1,15 @@
-"""rules.py 테스트. 어획 배분, 판매·생활비, 파산 (재생·붕괴는 다음 항목에서 추가)."""
+"""rules.py 테스트. 어획 배분, 판매·생활비, 파산, 재생·붕괴."""
 
 import pytest
 
-from pondvillage.rules import allocate_catch, check_bankruptcy, settle_money
+from pondvillage.rules import (
+    allocate_catch,
+    check_bankruptcy,
+    check_collapse,
+    regenerate,
+    remove_catch,
+    settle_money,
+)
 from pondvillage.world import World, config_from_dict
 
 # SPEC 숫자 그대로: 시작 돈 20, 1마리 1, 생활비 5, 빚 3일이면 떠남
@@ -258,3 +265,111 @@ def test_departed_fisher_is_not_counted_again():
 
     assert check_bankruptcy(world) == []
     assert a1.debt_days == 3
+
+
+# ---------------------------------------------------------------- 연못: 빼기·붕괴·재생
+
+
+def run_pond_day(world: World, requests: dict[str, int]) -> bool:
+    """정산 순서대로 하루: 배분 -> 연못에서 빼기 -> 판매·생활비 -> 파산 -> 붕괴 판정 -> 재생."""
+    catches = allocate_catch(requests, world.pond.stock)
+    remove_catch(world, catches)
+    end_of_day(world, catches)
+    collapsed = check_collapse(world)
+    regenerate(world)
+    return collapsed
+
+
+def pond_end_of_day(world: World, stock_left: int) -> int:
+    """남은 물고기를 정해 두고 붕괴 판정 -> 재생만 돌려 다음 날 아침 재고를 본다."""
+    world.pond.stock = stock_left
+    check_collapse(world)
+    regenerate(world)
+    return world.pond.stock
+
+
+def test_remove_catch_subtracts_total_from_stock():
+    world = make_world()
+    remove_catch(world, {"a1": 10, "a2": 20, "a3": 0})
+    assert world.pond.stock == 70
+
+
+def test_remove_catch_can_empty_the_pond():
+    world = make_world()
+    remove_catch(world, {"a1": 50, "a2": 50})
+    assert world.pond.stock == 0
+
+
+def test_remove_catch_more_than_stock_is_rejected():
+    world = make_world()
+    with pytest.raises(ValueError):
+        remove_catch(world, {"a1": 60, "a2": 41})
+    assert world.pond.stock == 100
+
+
+def test_remove_negative_catch_is_rejected():
+    world = make_world()
+    with pytest.raises(ValueError):
+        remove_catch(world, {"a1": -1})
+
+
+@pytest.mark.parametrize(
+    ("left", "next_morning"),
+    [(5, 10), (30, 60), (50, 100), (60, 100), (100, 100)],
+)
+def test_regeneration_doubles_up_to_capacity(left, next_morning):
+    world = make_world()
+    assert pond_end_of_day(world, left) == next_morning
+    assert world.pond.collapsed is False
+
+
+@pytest.mark.parametrize("left", [0, 1, 4])
+def test_fewer_than_five_left_collapses_without_regeneration(left):
+    world = make_world()
+    assert pond_end_of_day(world, left) == left
+    assert world.pond.collapsed is True
+
+
+def test_exactly_five_left_does_not_collapse():
+    world = make_world()
+    assert check_collapse(world) is False
+    world.pond.stock = 5
+    assert check_collapse(world) is False
+
+
+def test_collapse_is_permanent():
+    world = make_world()
+    pond_end_of_day(world, 3)
+    world.pond.stock = 50  # 누가 억지로 채워 넣어도
+    assert check_collapse(world) is True
+    regenerate(world)
+    assert world.pond.stock == 50
+
+
+def test_greedy_village_collapses_on_day_one():
+    """SPEC 숫자 그대로 5명이 매일 20마리씩: 첫날 100마리를 다 잡아 붕괴."""
+    raw = {**RAW, "agents": [{"id": f"g{i}", "name": f"{i}", "persona": "탐욕"} for i in range(5)]}
+    world = World.from_config(config_from_dict(raw))
+    assert run_pond_day(world, {a.id: 20 for a in world.agents}) is True
+    assert world.pond.stock == 0
+
+
+def test_three_greedy_fishers_collapse_on_day_three():
+    """3명이 매일 20마리: 100->40->80, 80->20->40, 40에서 13씩 39마리 -> 1마리 남아 붕괴."""
+    world = make_world()
+    requests = {"a1": 20, "a2": 20, "a3": 20}
+    assert run_pond_day(world, requests) is False
+    assert world.pond.stock == 80
+    assert run_pond_day(world, requests) is False
+    assert world.pond.stock == 40
+    assert run_pond_day(world, requests) is True
+    assert world.pond.stock == 1
+
+
+def test_sustainable_fishing_keeps_pond_full_for_30_days():
+    """잡고 남은 게 절반 이상이면 재생으로 다시 100. 30일 내내 유지되고 아무도 떠나지 않는다."""
+    world = make_world()
+    for _ in range(30):
+        assert run_pond_day(world, {"a1": 10, "a2": 10, "a3": 10}) is False
+        assert world.pond.stock == 100
+    assert all(a.alive for a in world.agents)

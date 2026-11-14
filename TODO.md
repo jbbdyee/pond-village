@@ -11,7 +11,7 @@
 - [x] `world.py`: Pond, Agent, World 데이터 구조 (`load_config`로 `configs/base.yaml`을 읽어 1일차 마을을 만든다. PyYAML 추가. 계산은 없음 — 판정은 `rules.py`에서)
 - [x] `rules.py`: 어획 배분 (`allocate_catch`: 요청 합계가 재고 이하면 요청대로, 넘으면 요청 비율로 나누고 내림. 내림으로 남은 물고기는 연못에 남는다. 테스트는 `tests/test_rules.py`에 같이 넣음)
 - [x] `rules.py`: 판매·생활비·파산(3일) (`settle_money`: 잡은 수 × 1 − 생활비 5, 돈은 0 아래로 내려갈 수 있음. `check_bankruptcy`: 돈 < 0인 날이 3일 이어지면 떠남, 0원은 빚 아님. 한 마리도 안 잡으면 7일째 떠남)
-- [ ] `rules.py`: 재생·붕괴
+- [x] `rules.py`: 재생·붕괴 (`remove_catch`: 잡힌 만큼 연못에서 뺌. `check_collapse`: 남은 물고기 < 5면 붕괴, 되돌릴 수 없음. `regenerate`: 2배, 상한 100, 붕괴하면 안 함. 붕괴 판정을 재생 앞으로 옮김 — SPEC 순서 변경, 사용자 승인)
 - [ ] `tests/test_rules.py`: 위 규칙 전부
 
 ## 다음 (P2 · P3)
