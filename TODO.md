@@ -8,7 +8,7 @@
 - [x] Ollama 설치 + 7~8B급 모델 하나 받기 (이미 설치돼 있었음: Ubuntu(WSL) 안의 Ollama, `qwen2.5vl:7b` 8.3B · `gemma3:4b`. OpenAI 호환 주소로 응답 확인)
 - [x] `llm.py` 최소 버전: OpenAI 호환 클라이언트로 ping (`--ping`) (qwen2.5vl:7b가 약 4.4초 만에 "안녕하세요!" 응답. 로컬 주소가 아니면 호출 거절)
 - [x] `configs/base.yaml`: 연못·경제 숫자, 페르소나 5개 (숫자는 SPEC 그대로. 어부: 만석·순자·영철·미란·동수. 파일을 읽는 코드와 PyYAML 추가는 `world.py`에서)
-- [ ] `world.py`: Pond, Agent, World 데이터 구조
+- [x] `world.py`: Pond, Agent, World 데이터 구조 (`load_config`로 `configs/base.yaml`을 읽어 1일차 마을을 만든다. PyYAML 추가. 계산은 없음 — 판정은 `rules.py`에서)
 - [ ] `rules.py`: 어획 배분
 - [ ] `rules.py`: 판매·생활비·파산(3일)
 - [ ] `rules.py`: 재생·붕괴
