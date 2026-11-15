@@ -422,7 +422,7 @@ function draw(v,d,ph,t){
         :'<span class="quiet">조용하다. 이 마을은 광장에서 말하지 않는다.</span>'}}
 }
 function msgLine(m){const ti=IDS.indexOf(m.to),w=m.to!=="all"&&ti>=0;
-  return`<div class="msg${w?" whisper":""}${m.is_rumor?" rumor":""}"><span class="who"><i class="swatch" style="background:${colorOf(m.from)}"></i>${esc(nameOf(m.from))}</span> <span class="quiet">${w?"🤫 → "+esc(AGENTS[ti].name)+"만":"→ 모두"}</span> ${esc(m.text)}</div>`}
+  return`<div class="msg${w?" whisper":""}${m.is_rumor?" rumor":""}"><span class="who"><i class="swatch" style="background:${colorOf(m.from)}"></i>${esc(nameOf(m.from))}</span> <span class="quiet">${w?"🤫 → "+esc(AGENTS[ti].name)+"만":m.to==="self"?"💭 혼잣말":"→ 모두"}</span> ${esc(m.text)}</div>`}
 
 // ---------- 광장 극장: 오른쪽 탭 · 어제 기록 · 타임라인 ----------
 function drawTheaterSide(v,info,name,ph,mk){
@@ -445,7 +445,7 @@ function drawTheaterSide(v,info,name,ph,mk){
   if(v.tab==="talk"){
     html+=`<h3>🌅 ${day}일째 아침 광장</h3>`;
     html+=info.msgs.length?info.msgs.map((m,k)=>{const ti=IDS.indexOf(m.to),w=m.to!=="all"&&ti>=0;
-      return`<div class="row${w?" whisper":""}${k===mk?" now":""}"><div class="head"><i class="swatch" style="background:${colorOf(m.from)}"></i><b>${esc(nameOf(m.from))}</b><span class="to">${w?"🤫 귓속말 → "+esc(AGENTS[ti].name)+"만 들음":"→ 모두에게"}</span><span class="mtag">${esc(modelOf(run,m.from))}</span></div><p>${esc(m.text)}</p></div>`}).join("")
+      return`<div class="row${w?" whisper":""}${k===mk?" now":""}"><div class="head"><i class="swatch" style="background:${colorOf(m.from)}"></i><b>${esc(nameOf(m.from))}</b><span class="to">${w?"🤫 귓속말 → "+esc(AGENTS[ti].name)+"만 들음":m.to==="self"?"💭 혼잣말 (아무도 못 들음)":"→ 모두에게"}</span><span class="mtag">${esc(modelOf(run,m.from))}</span></div><p>${esc(m.text)}</p></div>`}).join("")
       :`<div class="row"><p class="why">이날은 아무도 말하지 않았다${hasTalk(run)?"":" (이 마을은 광장 대화를 끈 마을이거나 봇 마을이다)"}.</p></div>`;
     if(ph>=SEG.fish[0]||ended){html+=`<h3>🎣 낚시 · 모두 합쳐 ${rec.total_catch}마리 (연못 ${rec.stock_start} → ${info.after})</h3>`;
       html+=IDS.map(id=>{const f=fishOf(id);if(!f)return"";return`<div class="row"><div class="head"><i class="swatch" style="background:${colorOf(id)}"></i><b>${esc(nameOf(id))}</b><span class="badge${f.parse_error?" warn":""}">${fishLabel(f)}</span><span class="to">잡음 ${catchOf(id)}</span></div>${f.reason?`<p class="why">💭 ${esc(f.reason)}</p>`:""}</div>`}).join("")}
@@ -479,7 +479,7 @@ function renderTimeline(v,day){
   box.innerHTML=run.days.map(d=>{const ms=(run.messages||[]).filter(m=>m.day===d.day);
     return`<button type="button" class="tday${d.day===day?" on":""}" data-day="${d.day}" aria-label="${d.day}일째로 가기"><span class="h"><span>${d.day}일째</span><span>${d.collapsed?"💧 붕괴":"🐟 "+d.stock_start+"→"+d.stock_end}</span></span>
       <span class="meter"><i style="width:${Math.max(0,Math.min(100,d.collapsed?d.stock_start-d.total_catch:d.stock_end))}%"></i></span>
-      <span>합 ${d.total_catch}마리 · 말 ${ms.length}</span><span class="dots">${ms.map(m=>`<i class="${m.to!=="all"?"w":""}" style="background:${colorOf(m.from)}" title="${esc(nameOf(m.from))}"></i>`).join("")}</span></button>`}).join("");
+      <span>합 ${d.total_catch}마리 · 말 ${ms.length}</span><span class="dots">${ms.map(m=>`<i class="${m.to!=="all"&&m.to!=="self"?"w":""}" style="background:${colorOf(m.from)}" title="${esc(nameOf(m.from))}"></i>`).join("")}</span></button>`}).join("");
   const on=box.querySelector(".on");if(on)box.scrollLeft=Math.max(0,on.offsetLeft-box.clientWidth/2+66);
 }
 

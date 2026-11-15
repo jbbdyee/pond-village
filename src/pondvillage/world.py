@@ -41,6 +41,11 @@ class EconomyConfig:
     bankrupt_after_days: int
 
 
+TALK_PLAZA = "plaza"
+TALK_SOLO = "solo"
+TALK_MODES = (TALK_PLAZA, TALK_SOLO)
+
+
 @dataclass(frozen=True)
 class TalkConfig:
     """광장 대화 설정 (SPEC 3장 광장). 끄면 광장 단계를 통째로 건너뛴다.
@@ -50,6 +55,18 @@ class TalkConfig:
 
     enabled: bool = False
     max_chars: int = 200  # 한 마디 최대 글자 수. 넘으면 코드가 자른다 (2026-11-15 사용자 승인)
+    # "plaza": 광장에서 서로 듣는다 (P6). "solo": 한 마디는 쓰지만 자기만 보고 아무도 못 듣는다 (P8 비교용.
+    # 대화 효과가 "남의 말을 들어서"인지 "잡기 전에 한 번 더 생각해서"인지 가르려고. 2026-11-15 사용자 승인)
+    mode: str = TALK_PLAZA
+
+    def __post_init__(self) -> None:
+        if self.mode not in TALK_MODES:
+            raise ConfigError(f"talk.mode는 {', '.join(TALK_MODES)} 중 하나여야 합니다: {self.mode}")
+
+    @property
+    def solo(self) -> bool:
+        """혼자 말하기 마을인지 (대화를 켰고 mode가 solo)."""
+        return self.enabled and self.mode == TALK_SOLO
 
 
 @dataclass(frozen=True)

@@ -22,7 +22,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from pondvillage.actions import NONE, PARSE_ERROR_KEY, TO_ALL
+from pondvillage.actions import NONE, PARSE_ERROR_KEY, TO_ALL, TO_SELF
 from pondvillage.world import Agent, Beliefs, MemoryItem
 
 KIND_EVENT = "event"
@@ -82,6 +82,8 @@ class PlazaMessage:
 
     def heard_by(self, agent_id: str) -> bool:
         """이 어부가 이 말을 들었는지. 귓속말은 보낸 사람과 받는 사람만 안다."""
+        if self.to == TO_SELF:  # 혼잣말: 말한 사람만
+            return agent_id == self.from_id
         return self.to == TO_ALL or agent_id in (self.to, self.from_id)
 
 
@@ -94,6 +96,8 @@ def heard_lines(messages: list[PlazaMessage], agent_id: str, names: dict[str, st
         who = "나" if m.from_id == agent_id else names[m.from_id]
         if m.to == TO_ALL:
             where = "모두에게"
+        elif m.to == TO_SELF:
+            where = "혼잣말, 아무도 듣지 않음"
         elif m.to == agent_id:
             where = "나에게 귓속말"
         else:

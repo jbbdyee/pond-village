@@ -1,0 +1,11 @@
+# 1단계 조건 X: 섞인 마을. 로컬에는 회사가 다른 모델이 2개뿐이라 3:2로 번갈아 앉힌다.
+# rotate: 시드마다 자리를 한 칸씩 돌려, 같은 이름이 늘 같은 모델을 맡지 않게 한다.
+#   시드 1 q g q g q → 시드 2 q q g q g → 시드 3 g q q g q
+experiment: exp1
+base: base.yaml
+days: 10
+seeds: [1, 2, 3]
+villages:
+  - name: X-qwen3gemma2
+    models: [qwen2.5:7b, gemma3:4b, qwen2.5:7b, gemma3:4b, qwen2.5:7b]
+    rotate: true

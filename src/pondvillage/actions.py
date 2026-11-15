@@ -92,6 +92,7 @@ def validate_fish_action(raw: object, cap: int, allow_inspect: bool = True) -> F
 
 SAY = "say"
 TO_ALL = "all"  # 모두에게. 그 밖의 to는 받는 어부 id (귓속말)
+TO_SELF = "self"  # 혼잣말 (talk.mode = solo). 말한 사람만 본다. 어부가 고르는 값이 아니라 러너가 붙인다
 _ALL_WORDS = {"all", "모두", "모두에게", "전체", "everyone"}
 
 
@@ -111,7 +112,7 @@ class SayDecision:
 
     @property
     def whisper(self) -> bool:
-        return self.to != TO_ALL
+        return self.to not in (TO_ALL, TO_SELF)
 
 
 def validate_say_action(

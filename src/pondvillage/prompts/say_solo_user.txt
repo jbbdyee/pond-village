@@ -1,0 +1,6 @@
+너의 이름은 {name}.{persona_line}
+{memory_block}오늘은 {day}일째다.
+아침 공지: 연못 재고 추정치 약 {estimate}마리. {yesterday_line}
+내 돈: {money}원.
+이웃: {neighbors}.
+오늘 생각을 혼잣말 한 마디로, JSON으로 답하라.

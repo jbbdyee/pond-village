@@ -79,6 +79,7 @@ LLM 호출: 에이전트당 하루 **3회** (광장, 어획, 일기). 투표가 
 - 받는 사람은 이름으로 답한다(어부에게는 이름만 알려 준다). 자기 자신·모르는 이름·떠난 사람이면 "모두에게"로 바꾸고 `clamped`로 기록한다.
 - 그날 들은 말은 어획 질문지에 바로 붙고, 그날 사실 기억에도 한 줄로 들어간다.
 - 봇은 말하지 않는다.
+- **혼자 말하기 (P8, 2026-11-15 사용자 승인)**: 설정 `talk.mode: solo`(기본은 `plaza`). 광장 단계는 그대로 돌지만, 한 마디는 받는 사람이 늘 자기 자신(`to = "self"`)이라 아무도 남의 말을 듣지 않는다. 질문지에도 "혼잣말이고 아무도 듣지 않는다"고 사실대로 적는다. 내 혼잣말은 그날 어획 질문지("오늘 아침 내가 적은 혼잣말")와 사실 기억에 들어간다. 이웃의 말을 듣지 못하므로 신뢰 점수는 질문지에 넣지 않는다(대화 끈 마을과 같음). 비교용 조건이며 숫자 규칙은 바뀌지 않는다.
 
 ### 어획 배분 규칙
 - 요청 합계 ≤ stock: 요청대로 지급
@@ -135,7 +136,7 @@ rumor:
 | `runs` | run_id, config_name, condition, seed, model, started_at, status (`model`: 같은 모델 마을이면 모델 이름, 섞이면 구성 이름 예: `3qwen2.5:7b+2gemma3:4b`. `condition`: 봇 종류 또는 `llm-same`·`llm-mixed`) |
 | `days` | run_id, day, stock_start, stock_end, total_catch, collapsed |
 | `agent_days` | run_id, day, agent_id, money, alive, catch, violated, beliefs_json, trust_json |
-| `messages` | run_id, day, from, to, text, is_rumor |
+| `messages` | run_id, day, from, to, text, is_rumor (to: `all` / 받는 어부 id / `self` = 혼잣말) |
 | `actions` | run_id, day, phase, agent_id, action_json, reason, parse_error, clamped |
 | `votes` | run_id, day, proposal_id, agent_id, vote |
 | `llm_calls` | run_id, day, agent_id, phase, model, prompt_tokens, completion_tokens, latency_ms, cost_usd, prompt, response, parse_error (호출 한 번마다 한 줄. 해석에 실패해 다시 물은 호출도 따로 남는다. 2026-11-15 prompt·response·parse_error 추가) |

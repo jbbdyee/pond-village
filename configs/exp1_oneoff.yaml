@@ -1,0 +1,13 @@
+# 1단계 조건 O: 한 명만 다른 마을. 그 한 명이 마을을 바꾸는지, 마을에 물드는지.
+# rotate: 다른 한 명의 자리가 시드마다 바뀐다 (시드 1 만석 → 2 순자 → 3 영철).
+experiment: exp1
+base: base.yaml
+days: 10
+seeds: [1, 2, 3]
+villages:
+  - name: O-qwen4gemma1
+    models: [gemma3:4b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b]
+    rotate: true
+  - name: O-gemma4qwen1
+    models: [qwen2.5:7b, gemma3:4b, gemma3:4b, gemma3:4b, gemma3:4b]
+    rotate: true

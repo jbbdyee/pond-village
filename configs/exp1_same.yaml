@@ -1,0 +1,12 @@
+# 1단계 조건 S: 같은 모델 마을 (EXPERIMENT 1단계). 개발용 로컬 모델 2개로 10일씩.
+# 실행: uv run python -m pondvillage.experiment configs/exp1_same.yaml
+# 숫자 규칙·페르소나 끔·대화 켬은 base 설정 그대로 쓴다. models는 어부 자리 순서 (만석 순자 영철 미란 동수).
+experiment: exp1
+base: base.yaml
+days: 10
+seeds: [1, 2, 3]
+villages:
+  - name: S-qwen
+    models: [qwen2.5:7b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b]
+  - name: S-gemma
+    models: [gemma3:4b, gemma3:4b, gemma3:4b, gemma3:4b, gemma3:4b]

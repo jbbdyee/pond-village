@@ -31,7 +31,7 @@ from collections.abc import Callable
 
 from pondvillage import llm, memory, rules
 from pondvillage.actions import (
-    INSPECT, NONE, TO_ALL, FishDecision, SayDecision, catch_cap, validate_fish_action, validate_say_action,
+    INSPECT, NONE, TO_ALL, TO_SELF, FishDecision, SayDecision, catch_cap, validate_fish_action, validate_say_action,
 )
 from pondvillage.agents.base import BaseAgent, DiaryContext, Observation, SayContext
 from pondvillage.agents.llm_agent import build_llm_agents
@@ -39,7 +39,7 @@ from pondvillage.agents.scripted import CooperativeBot, GreedyBot, RandomBot
 from pondvillage.logger import (
     STATUS_ABORTED_COST, STATUS_ERROR, RunLogger, format_tokens, make_run_id, make_stamp, open_db,
 )
-from pondvillage.world import Config, World, load_config
+from pondvillage.world import Agent, Config, World, load_config
 
 # 끝난 이유
 END_DAYS = "days"  # 정한 일수 도달
@@ -134,8 +134,11 @@ def _names(world: World) -> dict[str, str]:
 
 
 def _trust_names(world: World, agent_id: str) -> dict[str, str] | None:
-    """질문지에 신뢰 점수를 붙일 남은 이웃 (id → 이름). 대화를 끈 마을은 None (P5 질문지 그대로)."""
-    if not world.config.talk.enabled:
+    """질문지에 신뢰 점수를 붙일 남은 이웃 (id → 이름). 대화를 끈 마을은 None (P5 질문지 그대로).
+
+    혼자 말하기 마을도 None: 이웃의 말을 듣지 못하니 신뢰 점수는 근거 없는 숫자다 (대화 끈 마을과 같은 이유).
+    """
+    if not world.config.talk.enabled or world.config.talk.solo:
         return None
     return {a.id: a.name for a in world.alive_agents() if a.id != agent_id}
 
@@ -147,13 +150,18 @@ def _plaza_phase(
     yesterday: int | None,
     rng: random.Random,
 ) -> list[SayTurn]:
-    """광장: 시드로 섞은 순서대로 한 마디씩. 각자 내 차례 전까지 나온 말 중 들을 수 있는 것만 본다."""
+    """광장: 시드로 섞은 순서대로 한 마디씩. 각자 내 차례 전까지 나온 말 중 들을 수 있는 것만 본다.
+
+    혼자 말하기 마을(talk.mode = solo, P8): 한 마디씩 쓰지만 받는 사람은 늘 자기 자신(TO_SELF)이라
+    아무도 남의 말을 듣지 않는다. 순서도 똑같이 섞는다 (rng 쓰임새를 광장 마을과 맞추려고).
+    """
     alive = world.alive_agents()
     order = list(alive)
     rng.shuffle(order)  # 봇 마을에서도 섞어 둔다 (rng 쓰임새가 마을 구성에 따라 흔들리지 않게)
     names = _names(world)
     name_to_id = {a.name: a.id for a in world.agents}
     listeners = {a.id for a in alive}
+    solo = world.config.talk.solo
     says: list[SayTurn] = []
     spoken: list[memory.PlazaMessage] = []
     for agent in order:
@@ -171,10 +179,31 @@ def _plaza_phase(
         if raw is None:  # 봇
             continue
         decision = validate_say_action(raw, agent.id, name_to_id, listeners, world.config.talk.max_chars)
+        if solo and not decision.silent:
+            decision = replace(decision, to=TO_SELF)
         says.append(SayTurn(agent.id, decision))
         if not decision.silent:
             spoken.append(memory.PlazaMessage(agent.id, decision.to, decision.message))
     return says
+
+
+def by_model(agents: list[Agent]) -> list[Agent]:
+    """같은 모델끼리 이어서 부르도록 다시 줄 세운다 (모델이 나온 순서대로, 그 안에서는 마을 순서).
+
+    그래픽카드에 모델이 하나씩만 올라가서, 섞인 마을은 모델을 바꿀 때마다 몇 초씩 다시 올린다 (P4: 3~4배 느림).
+    어획·일기는 어부들이 서로의 답을 모르고 따로 정하므로 부르는 순서를 바꿔도 결과는 같다 (P8).
+    광장은 뒤 사람이 앞 사람 말을 듣기 때문에 묶지 않는다.
+    """
+    first_seen: dict[str | None, int] = {}
+    for a in agents:
+        first_seen.setdefault(a.model, len(first_seen))
+    return sorted(agents, key=lambda a: first_seen[a.model])  # sorted는 같은 값끼리 원래 순서를 지킨다
+
+
+def _in_village_order(world: World, turns: list[FishTurn]) -> list[FishTurn]:
+    """기록·표는 늘 마을 순서(설정 파일 순서)로 남긴다."""
+    order = {a.id: i for i, a in enumerate(world.agents)}
+    return sorted(turns, key=lambda t: order[t.agent_id])
 
 
 def _fish_phase(
@@ -187,7 +216,7 @@ def _fish_phase(
     economy = world.config.economy
     names = _names(world)
     turns: list[FishTurn] = []
-    for agent in world.alive_agents():
+    for agent in by_model(world.alive_agents()):
         brain = agents[agent.id]
         obs = Observation(
             day=world.day,
@@ -208,7 +237,7 @@ def _fish_phase(
             brain.decide_fish(again), catch_cap(economy, inspected=True), allow_inspect=False
         )
         turns.append(FishTurn(agent.id, inspected=True, decision=second, first=first, exact_stock=again.exact_stock))
-    return turns
+    return _in_village_order(world, turns)
 
 
 def run_day(
@@ -304,7 +333,7 @@ def _diary_phase(world: World, agents: dict[str, BaseAgent]) -> list[memory.Diar
     alive = world.alive_agents()
     name_to_id = {a.name: a.id for a in world.agents}
     entries: list[memory.DiaryEntry] = []
-    for agent in alive:
+    for agent in by_model(alive):
         ctx = DiaryContext(
             day=world.day,
             agent_id=agent.id,
@@ -321,7 +350,8 @@ def _diary_phase(world: World, agents: dict[str, BaseAgent]) -> list[memory.Diar
         )
         memory.apply_diary(agent, world.day, entry)
         entries.append(entry)
-    return entries
+    order = {a.id: i for i, a in enumerate(world.agents)}
+    return sorted(entries, key=lambda e: order[e.agent_id])
 
 
 def run(
@@ -581,29 +611,67 @@ def format_plaza(world: World, day: DayResult) -> str:
     return "\n".join(lines) if lines else "  (말한 사람 없음)"
 
 
-def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp: str, runs_dir: Path) -> int:
-    if config.llm is None:
-        print("설정 파일에 llm 항목이 없습니다.")
-        return 1
-    override = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else None
-    models = assign_models(config, override)
-    base_url = config.llm.base_url
+def format_model_summary(world: World, result: RunResult) -> str:
+    """모델별 한 줄: 어부 1명 하루 평균 요청 마릿수와 연못 확인 횟수 (analyze.py와 같은 정의).
 
-    # 출발 전 점검: 꺼진 서버에 120초씩 기다리지 않게 (WSL이 쉬면 Ollama도 꺼진다)
-    try:
-        llm.check_ollama(base_url, list(models.values()))
-    except (llm.LLMUnavailable, llm.PaidCallNotAllowed) as e:
-        print(f"[시작 못 함] {e}")
-        return 1
+    요청은 검사 뒤 최종 요청이다. 확인 뒤 안 잡음·해석 실패도 0마리로 평균에 넣는다.
+    """
+    model_of = {a.id: a.model or "?" for a in world.agents}
+    stats: dict[str, list[int]] = {}  # 모델 → [요청 합, 어부-일 수, 확인 횟수]
+    for d in result.days:
+        for t in d.turns:
+            s = stats.setdefault(model_of[t.agent_id], [0, 0, 0])
+            s[0] += d.requests.get(t.agent_id, 0)
+            s[1] += 1
+            s[2] += int(t.inspected)
+    parts = [
+        f"{m} 평균 요청 {total / n:.1f}마리 (어부-일 {n}) · 연못 확인 {inspected}번"
+        for m, (total, n, inspected) in stats.items() if n
+    ]
+    return "모델별: " + " / ".join(parts) if parts else "모델별: (기록 없음)"
 
-    seed = config.seed if args.seed is None else args.seed
+
+def talk_label(config: Config) -> str:
+    if not config.talk.enabled:
+        return "끔"
+    return "혼자 말하기" if config.talk.solo else "켬"
+
+
+@dataclass
+class VillageRun:
+    """LLM 마을 한 번 실행의 결과. 멈췄으면 result는 None이고 error에 이유."""
+
+    run_id: str
+    db_path: Path | None
+    world: World
+    calls: list[llm.CallRecord]
+    result: RunResult | None = None
+    error: str | None = None
+
+
+def run_llm_village(
+    config: Config,
+    models: dict[str, str],
+    seed: int,
+    *,
+    run_id: str,
+    condition: str,
+    config_name: str,
+    runs_dir: Path,
+    days: int | None = None,
+    log: bool = True,
+    on_day: Callable[[DayResult], None] | None = None,
+) -> VillageRun:
+    """LLM 마을 하나를 만들어 끝까지 돌린다. 러너(--llm)와 실험 러너(experiment.py)가 같이 쓴다.
+
+    Ollama 점검은 부르는 쪽이 먼저 한다 (실험은 마을 여러 개 앞에서 한 번만).
+    """
+    assert config.llm is not None
     world = World.from_config(config)
     for agent in world.agents:
         agent.model = models[agent.id]
-    condition = village_condition(models)
-    run_id = make_run_id(stamp, condition, seed)
-    db_path = runs_dir / f"{run_id}.db"
-    conn = None if args.no_log else open_db(db_path)
+    db_path = runs_dir / f"{run_id}.db" if log else None
+    conn = open_db(db_path) if db_path is not None else None
 
     calls: list[llm.CallRecord] = []
     logger = None
@@ -618,32 +686,56 @@ def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp:
             logger.log_llm_call(rec)
 
     caller = llm.LLMCaller(
-        base_url, config.llm.temperature, meter=llm.CostMeter(config.llm.cost_cap_usd), record=record
+        config.llm.base_url, config.llm.temperature, meter=llm.CostMeter(config.llm.cost_cap_usd), record=record
     )
     agents = build_llm_agents(config, caller, models)
-    print(
-        f"LLM 마을: {village_label(models)} · 시드 {seed} · 성격 문구 {'켬' if config.llm.persona_enabled else '끔'}"
-        f" · 광장 대화 {'켬' if config.talk.enabled else '끔'}"
-    )
-
-    def progress(d: DayResult) -> None:
-        print(f"  {d.day}일째 끝: 총어획 {d.total_catch}, 저녁 재고 {d.stock_end}{' (붕괴)' if d.collapsed else ''}",
-              flush=True)
-
+    out = VillageRun(run_id, db_path, world, calls)
     try:
-        result = run(world, agents, seed, days=args.days, logger=logger, on_day=progress)
+        out.result = run(world, agents, seed, days=days, logger=logger, on_day=on_day)
     except (llm.LLMUnavailable, llm.CostCapExceeded) as e:
-        print(f"[멈춤] {e}")
-        if conn is not None:
-            print(f"그때까지의 기록: {db_path}")
-        return 1
+        out.error = str(e)
     finally:
         if conn is not None:
             conn.close()
+    return out
+
+
+def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp: str, runs_dir: Path) -> int:
+    if config.llm is None:
+        print("설정 파일에 llm 항목이 없습니다.")
+        return 1
+    override = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else None
+    models = assign_models(config, override)
+
+    # 출발 전 점검: 꺼진 서버에 120초씩 기다리지 않게 (WSL이 쉬면 Ollama도 꺼진다)
+    try:
+        llm.check_ollama(config.llm.base_url, list(models.values()))
+    except (llm.LLMUnavailable, llm.PaidCallNotAllowed) as e:
+        print(f"[시작 못 함] {e}")
+        return 1
+
+    seed = config.seed if args.seed is None else args.seed
+    condition = village_condition(models)
+    print(
+        f"LLM 마을: {village_label(models)} · 시드 {seed} · 성격 문구 {'켬' if config.llm.persona_enabled else '끔'}"
+        f" · 광장 대화 {talk_label(config)}"
+    )
+    vr = run_llm_village(
+        config, models, seed, run_id=make_run_id(stamp, condition, seed), condition=condition,
+        config_name=config_name, runs_dir=runs_dir, days=args.days, log=not args.no_log, on_day=print_progress,
+    )
+    world, calls, db_path = vr.world, vr.calls, vr.db_path
+    if vr.result is None:
+        print(f"[멈춤] {vr.error}")
+        if db_path is not None:
+            print(f"그때까지의 기록: {db_path}")
+        return 1
+    result = vr.result
 
     print(format_table(world, result))
     print("\n어부 답 (요청 마릿수)")
     print(format_requests(world, result))
+    print(format_model_summary(world, result))
     if config.talk.enabled:
         print("\n1일째 광장 (말한 순서, *: 잘렸거나 받는 사람을 몰라 모두에게로 바꿈)")
         print(format_plaza(world, result.days[0]))
@@ -656,9 +748,14 @@ def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp:
     first_asks = [(c.day, c.phase, c.prompt_tokens) for c in calls if '"role": "assistant"' not in c.prompt]
     print("\n질문지 길이 (프롬프트 토큰, 첫 질문만)")
     print(format_tokens(first_asks))
-    if conn is not None:
+    if db_path is not None:
         print(f"저장: {db_path}")
     return 0
+
+
+def print_progress(d: DayResult) -> None:
+    print(f"  {d.day}일째 끝: 총어획 {d.total_catch}, 저녁 재고 {d.stock_end}{' (붕괴)' if d.collapsed else ''}",
+          flush=True)
 
 
 def main(argv: list[str] | None = None) -> int:

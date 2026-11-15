@@ -1,0 +1,14 @@
+# 비교용 마을 (qwen 5명). P6에서 대화를 켜자 첫날 요청이 줄었는데, 그 까닭을 가르려고.
+# solo: 한 마디는 쓰지만 자기만 본다 (아무도 못 들음). "잡기 전에 한 번 더 생각한 덕분"인지 보기.
+# off: 광장 단계를 건너뛴다 (P5와 같은 질문지).
+experiment: exp1
+base: base.yaml
+days: 10
+seeds: [1, 2, 3]
+villages:
+  - name: solo-qwen
+    models: [qwen2.5:7b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b]
+    talk: {mode: solo}
+  - name: off-qwen
+    models: [qwen2.5:7b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b, qwen2.5:7b]
+    talk: {enabled: false}

@@ -453,7 +453,12 @@ def test_main_llm_mixed_village_end_to_end(tmp_path, monkeypatch, capsys):
         "llm-mixed", "3qwen2.5:7b+2gemma3:4b", "days",
     )
     models = [m for (m,) in conn.execute("SELECT model FROM llm_calls WHERE day = 1 AND phase = 'fish' ORDER BY rowid")]
-    assert models == ["qwen2.5:7b", "gemma3:4b", "qwen2.5:7b", "gemma3:4b", "qwen2.5:7b"]
+    # 어획은 같은 모델끼리 이어서 부른다 (P8: 그래픽카드에서 모델을 덜 바꿔 끼우게)
+    assert models == ["qwen2.5:7b", "qwen2.5:7b", "qwen2.5:7b", "gemma3:4b", "gemma3:4b"]
+    # 기록은 그대로 마을 순서
+    agents = [a for (a,) in conn.execute("SELECT agent_id FROM actions WHERE day = 1 AND phase = 'fish' ORDER BY rowid")]
+    assert agents == ["agent_01", "agent_02", "agent_03", "agent_04", "agent_05"]
+    assert "모델별: qwen2.5:7b 평균 요청" in out and "gemma3:4b 평균 요청" in out
     conn.close()
 
 

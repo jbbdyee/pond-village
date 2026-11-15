@@ -86,7 +86,7 @@ def test_ping_refused_for_paid_address_exits_with_2(capsys):
 # ---------------------------------------------------------------- JSON 해석 (P4)
 
 
-from openai import APIConnectionError, NotFoundError
+from openai import APIConnectionError, InternalServerError, NotFoundError
 
 
 @pytest.mark.parametrize("text", [
@@ -186,6 +186,36 @@ def test_connection_drop_is_retried_once():
 
 def test_server_down_stops_with_llm_unavailable():
     client = SeqClient([conn_error(), conn_error()])
+    with pytest.raises(llm.LLMUnavailable):
+        caller(client).ask_json([{"role": "user", "content": "q"}], model="m")
+
+
+def server_500(message):
+    response = SimpleNamespace(request=None, status_code=500, headers={})
+    return InternalServerError(message, response=response, body=None)
+
+
+REPEAT = "Error code: 500 - prediction aborted, token repeat limit reached"
+
+
+def test_repeat_limit_abort_is_asked_again_not_stopped():
+    """P8: 모델이 같은 말을 되풀이해 Ollama가 500으로 멈춰도 실험을 멈추지 않고 같은 질문을 한 번 더 한다."""
+    records = []
+    client = SeqClient([server_500(REPEAT), '{"action": "fish", "amount": 3, "reason": "r"}'])
+    reply = caller(client, records).ask_json([{"role": "user", "content": "q"}], model="m")
+    assert reply.data["amount"] == 3 and reply.calls == 2
+    assert "끝내지 못함" in records[0].parse_error and records[0].response == ""
+    assert client.calls[1] == client.calls[0]  # 빈 답이나 재촉 문구를 붙이지 않고 같은 질문
+
+
+def test_repeat_limit_abort_twice_becomes_parse_error():
+    client = SeqClient([server_500(REPEAT), server_500(REPEAT)])
+    reply = caller(client).ask_json([{"role": "user", "content": "q"}], model="m")
+    assert reply.data is None and "끝내지 못함" in reply.parse_error
+
+
+def test_other_server_500_still_stops():
+    client = SeqClient([server_500("Error code: 500 - out of memory")])
     with pytest.raises(llm.LLMUnavailable):
         caller(client).ask_json([{"role": "user", "content": "q"}], model="m")
 

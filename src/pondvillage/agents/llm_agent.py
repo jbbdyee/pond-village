@@ -73,8 +73,26 @@ def diary_user_prompt(name: str, persona: str | None, ctx: DiaryContext) -> str:
 
 
 def say_system_prompt(config: Config) -> str:
-    """광장 질문지의 규칙 설명 + 말하기 JSON 모양 (P6). 협력하라는 말은 넣지 않는다 (스스로 맞추는지가 관찰 대상)."""
-    return load_prompt("say_system").format(rules=rules_text(config), max_chars=config.talk.max_chars)
+    """광장 질문지의 규칙 설명 + 말하기 JSON 모양 (P6). 협력하라는 말은 넣지 않는다 (스스로 맞추는지가 관찰 대상).
+
+    혼자 말하기 마을(talk.mode = solo)은 "아무도 듣지 않는다"고 사실대로 적은 질문지를 쓴다 (P8).
+    """
+    name = "say_solo_system" if config.talk.solo else "say_system"
+    return load_prompt(name).format(rules=rules_text(config), max_chars=config.talk.max_chars)
+
+
+def say_solo_user_prompt(name: str, persona: str | None, ctx: SayContext) -> str:
+    """혼자 말하기 마을의 아침 질문지. 들은 말 칸이 없다 (아무에게서도 듣지 않으므로)."""
+    return load_prompt("say_solo_user").format(
+        name=name,
+        persona_line=f" {persona}" if persona else "",
+        memory_block=ctx.memory,
+        day=ctx.day,
+        estimate=ctx.stock_estimate,
+        yesterday_line=_yesterday_line(ctx.yesterday_total_catch),
+        money=ctx.money,
+        neighbors=", ".join(ctx.neighbors) if ctx.neighbors else "없음",
+    )
 
 
 def _yesterday_line(total: int | None) -> str:
@@ -101,10 +119,16 @@ def say_user_prompt(name: str, persona: str | None, ctx: SayContext) -> str:
     )
 
 
-def fish_user_prompt(name: str, persona: str | None, obs: Observation, inspect_cap: int) -> str:
-    """오늘 아침 상황. persona가 None이면 이름만. 오늘 광장에서 들은 말이 있으면 붙인다 (P6)."""
+def fish_user_prompt(
+    name: str, persona: str | None, obs: Observation, inspect_cap: int, solo: bool = False
+) -> str:
+    """오늘 아침 상황. persona가 None이면 이름만. 오늘 광장에서 들은 말이 있으면 붙인다 (P6).
+
+    solo(혼자 말하기 마을)면 들은 말 대신 "내가 적은 혼잣말"로 머리말을 바꾼다 (P8).
+    """
     yesterday = _yesterday_line(obs.yesterday_total_catch)
-    heard = f"[오늘 아침 광장에서 들은 말]\n{obs.heard}\n" if obs.heard else ""
+    title = "오늘 아침 내가 적은 혼잣말" if solo else "오늘 아침 광장에서 들은 말"
+    heard = f"[{title}]\n{obs.heard}\n" if obs.heard else ""
     inspect = ""
     if obs.exact_stock is not None:
         inspect = (
@@ -144,13 +168,14 @@ class LLMAgent(BaseAgent):
         self.system = fish_system_prompt(config)
         self.diary_system = diary_system_prompt(config)
         self.say_system = say_system_prompt(config)
+        self.solo = config.talk.solo
         eco = config.economy
         self.inspect_cap = math.floor(eco.max_catch_per_day * eco.inspect_catch_factor)
 
     def messages_for(self, obs: Observation) -> list[dict[str, str]]:
         return [
             {"role": "system", "content": self.system},
-            {"role": "user", "content": fish_user_prompt(self.name, self.persona, obs, self.inspect_cap)},
+            {"role": "user", "content": fish_user_prompt(self.name, self.persona, obs, self.inspect_cap, self.solo)},
         ]
 
     def decide_fish(self, obs: Observation) -> dict:
@@ -165,7 +190,8 @@ class LLMAgent(BaseAgent):
     def say_messages_for(self, ctx: SayContext) -> list[dict[str, str]]:
         return [
             {"role": "system", "content": self.say_system},
-            {"role": "user", "content": say_user_prompt(self.name, self.persona, ctx)},
+            {"role": "user", "content": (say_solo_user_prompt if self.solo else say_user_prompt)(
+                self.name, self.persona, ctx)},
         ]
 
     def say(self, ctx: SayContext) -> dict:

@@ -22,7 +22,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
-from openai import APIConnectionError, APITimeoutError, OpenAI, OpenAIError
+from openai import APIConnectionError, APITimeoutError, InternalServerError, OpenAI, OpenAIError
 
 DEFAULT_BASE_URL = "http://localhost:11434/v1"
 # 개발용 기본 모델 (2026-11-15 결정, configs/base.yaml과 같게 둔다).
@@ -56,6 +56,17 @@ class LLMResult:
     prompt_tokens: int
     completion_tokens: int
     latency_ms: int
+    aborted: str | None = None  # 서버가 답을 만들다 스스로 멈췄으면 그 이유 (text는 빈 글)
+
+
+# 서버는 살아 있는데 모델이 답을 끝내지 못한 경우 (P8에서 만남: 같은 말을 되풀이하다
+# Ollama가 "prediction aborted, token repeat limit reached"로 500을 돌려줌). 모델의 "이상한 답"이라
+# 서버가 꺼진 것과 달리 실험을 멈추지 않고 해석 실패처럼 다룬다 (지침 규칙 6).
+ABORT_MARKERS = ("prediction aborted", "token repeat limit")
+
+
+def is_generation_abort(error: Exception) -> bool:
+    return isinstance(error, InternalServerError) and any(m in str(error) for m in ABORT_MARKERS)
 
 
 @dataclass(frozen=True)
@@ -208,9 +219,13 @@ class LLMCaller:
         self.client = client
 
     def _call(self, messages: list[dict[str, str]], model: str) -> LLMResult:
-        """한 번 부른다. 연결이 끊기면 1번 더, 그래도 안 되면 LLMUnavailable."""
+        """한 번 부른다. 연결이 끊기면 1번 더, 그래도 안 되면 LLMUnavailable.
+
+        모델이 답을 끝내지 못해 서버가 멈춘 경우(되풀이 한도)는 빈 답 + aborted로 돌려준다 (멈추지 않음).
+        """
         last: Exception | None = None
         for _ in range(2):
+            started = time.perf_counter()
             try:
                 return chat(
                     messages, model=model, base_url=self.base_url, temperature=self.temperature,
@@ -218,6 +233,11 @@ class LLMCaller:
                 )
             except (APIConnectionError, APITimeoutError) as e:
                 last = e
+            except InternalServerError as e:
+                if not is_generation_abort(e):
+                    raise LLMUnavailable(f"{model} 호출 실패: {e}") from e
+                latency = round((time.perf_counter() - started) * 1000)
+                return LLMResult("", model, 0, 0, latency, aborted=str(e))
             except OpenAIError as e:  # 모델 없음 등: 다시 불러도 같다
                 raise LLMUnavailable(f"{model} 호출 실패: {e}") from e
         raise LLMUnavailable(
@@ -233,12 +253,19 @@ class LLMCaller:
         agent_id: str | None = None,
         phase: str | None = None,
     ) -> JsonReply:
-        """JSON 하나를 받아 온다. 해석 실패면 1번 더 묻고, 그래도 실패면 data=None (멈추지 않음)."""
+        """JSON 하나를 받아 온다. 해석 실패면 1번 더 묻고, 그래도 실패면 data=None (멈추지 않음).
+
+        모델이 답을 끝내지 못한 경우(aborted)도 해석 실패로 친다. 다시 물을 때는 빈 답을 붙이지 않고
+        같은 질문을 그대로 한 번 더 한다 (temperature 0.7이라 다른 답이 나올 수 있다).
+        """
         convo = list(messages)
         error: str | None = None
         for attempt in (1, 2):
             result = self._call(convo, model)
-            data, error = parse_json(result.text)
+            if result.aborted:
+                data, error = None, f"모델이 답을 끝내지 못함: {result.aborted}"
+            else:
+                data, error = parse_json(result.text)
             cost = estimate_cost(self.base_url, result.prompt_tokens, result.completion_tokens)
             if self.record is not None:
                 self.record(CallRecord(
@@ -250,6 +277,8 @@ class LLMCaller:
             self.meter.add(cost)  # 기록한 뒤에 검사: 상한을 넘긴 호출도 남는다
             if data is not None:
                 return JsonReply(data, None, attempt)
+            if result.aborted:
+                continue
             convo = convo + [
                 {"role": "assistant", "content": result.text},
                 {"role": "user", "content": RETRY_NUDGE},
