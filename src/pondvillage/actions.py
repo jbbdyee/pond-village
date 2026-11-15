@@ -86,3 +86,77 @@ def validate_fish_action(raw: object, cap: int, allow_inspect: bool = True) -> F
 
     clipped = min(max(amount, 0), cap)
     return FishDecision(FISH, clipped, reason, clamped=clipped != amount)
+
+
+# ---------------------------------------------------------------- 광장 (say, P6)
+
+SAY = "say"
+TO_ALL = "all"  # 모두에게. 그 밖의 to는 받는 어부 id (귓속말)
+_ALL_WORDS = {"all", "모두", "모두에게", "전체", "everyone"}
+
+
+@dataclass(frozen=True)
+class SayDecision:
+    """검사를 마친 광장 한 마디. silent면 말하지 않은 것 (해석 실패)."""
+
+    to: str  # TO_ALL 또는 받는 어부 id. silent면 TO_ALL
+    message: str  # 잘라낸 뒤의 말. silent면 빈 글
+    reason: str
+    clamped: bool = False  # 글이 길어 잘렸거나, 받는 사람을 알 수 없어 "모두에게"로 바꿨는지
+    parse_error: str | None = None
+
+    @property
+    def silent(self) -> bool:
+        return self.parse_error is not None
+
+    @property
+    def whisper(self) -> bool:
+        return self.to != TO_ALL
+
+
+def validate_say_action(
+    raw: object,
+    speaker_id: str,
+    name_to_id: dict[str, str],
+    listeners: set[str],
+    max_chars: int,
+) -> SayDecision:
+    """어부의 광장 답을 검사한다 (SPEC 4장 say).
+
+    - message가 비었거나 글이 아니면 "말 안 함" + parse_error. action이 있는데 say가 아니어도 실패.
+    - to는 "all"(또는 "모두") / 이웃 이름 / 이웃 id를 받는다. LLM에게는 이름만 알려 주므로 이름이 보통이다.
+      자기 자신·모르는 이름·떠난 사람이면 "모두에게"로 바꾸고 clamped로 표시한다 (말은 살린다).
+    - message는 max_chars에서 자르고 clamped로 표시한다.
+    listeners: 지금 광장에 있는(남아 있는) 어부 id들.
+    """
+    def fail(why: str, reason: str = "") -> SayDecision:
+        return SayDecision(TO_ALL, "", reason, parse_error=why)
+
+    if not isinstance(raw, dict):
+        return fail(f"dict가 아님: {type(raw).__name__}")
+    if raw.get(PARSE_ERROR_KEY):
+        return fail(str(raw[PARSE_ERROR_KEY]))
+
+    reason = raw.get("reason", "")
+    reason = reason if isinstance(reason, str) else str(reason)
+    action = raw.get("action", SAY)
+    if action != SAY:
+        return fail(f"모르는 행동: {action!r}", reason)
+    message = raw.get("message")
+    if not isinstance(message, str) or not message.strip():
+        return fail(f"message가 글이 아님: {message!r}", reason)
+    message = message.strip()
+    clamped = len(message) > max_chars
+    message = message[:max_chars]
+
+    to_raw = raw.get("to", TO_ALL)
+    key = str(to_raw).strip() if to_raw is not None else TO_ALL
+    if key.lower() in _ALL_WORDS or key == "":
+        to = TO_ALL
+    else:
+        target = name_to_id.get(key, key if key in listeners else None)
+        if target is None or target == speaker_id or target not in listeners:
+            to, clamped = TO_ALL, True
+        else:
+            to = target
+    return SayDecision(to, message, reason, clamped=clamped)

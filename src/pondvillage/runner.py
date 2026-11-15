@@ -2,7 +2,8 @@
 
 러너는 "진행자"다. 직접 판정하지 않고, SPEC 3장 순서대로 어부에게 묻고 규칙 엔진을 부른다.
 - 아침 공지: 연못 추정치(시드 고정 무작위)와 어제 총 어획량
-- 광장: (P6에서 붙임)
+- 광장: 설정 talk.enabled일 때만. 매일 시드로 섞은 순서대로 한 명씩 한 마디(모두에게 / 귓속말).
+  뒤 사람은 앞에서 나온 말 중 자기가 들을 수 있는 것을 보고 말한다. 봇은 말하지 않는다
 - 어획: 어부 답 → `actions.py` 검사. 연못을 확인한 어부에게는 정확한 재고를 보여 주고 한 번 더 묻는다
 - 정산: `rules.py` 함수를 순서대로 (배분 → 빼기 → 판매·생활비 → 파산 → 붕괴 → 재생)
 - 기억: 정산 뒤 각 어부가 겪은 사실을 기억에 적는다 (`memory.py`, 코드가 적음)
@@ -29,8 +30,10 @@ from collections import Counter
 from collections.abc import Callable
 
 from pondvillage import llm, memory, rules
-from pondvillage.actions import INSPECT, NONE, FishDecision, catch_cap, validate_fish_action
-from pondvillage.agents.base import BaseAgent, DiaryContext, Observation
+from pondvillage.actions import (
+    INSPECT, NONE, TO_ALL, FishDecision, SayDecision, catch_cap, validate_fish_action, validate_say_action,
+)
+from pondvillage.agents.base import BaseAgent, DiaryContext, Observation, SayContext
 from pondvillage.agents.llm_agent import build_llm_agents
 from pondvillage.agents.scripted import CooperativeBot, GreedyBot, RandomBot
 from pondvillage.logger import (
@@ -76,6 +79,14 @@ class FishTurn:
     exact_stock: int | None = None  # 확인했다면 그때 본 정확한 재고 (기억에 적는다)
 
 
+@dataclass(frozen=True)
+class SayTurn:
+    """어부 한 명의 광장 기록 (말한 순서대로 쌓인다)."""
+
+    agent_id: str
+    decision: SayDecision
+
+
 @dataclass
 class DayResult:
     """하루 동안 일어난 일. 콘솔 표와 SQLite 로그(`logger.py`)가 이걸 읽는다."""
@@ -93,10 +104,20 @@ class DayResult:
     money: dict[str, int] = field(default_factory=dict)  # 정산 뒤 돈 (모든 어부)
     alive: dict[str, bool] = field(default_factory=dict)
     diaries: list[memory.DiaryEntry] = field(default_factory=list)  # 오늘 쓴 일기 (봇 마을은 빈 목록)
+    says: list[SayTurn] = field(default_factory=list)  # 오늘 광장 (말한 순서. 대화를 끄거나 봇이면 빈 목록)
 
     @property
     def total_catch(self) -> int:
         return sum(self.catches.values())
+
+    @property
+    def messages(self) -> list[memory.PlazaMessage]:
+        return plaza_messages(self.says)
+
+
+def plaza_messages(says: list[SayTurn]) -> list[memory.PlazaMessage]:
+    """광장에서 실제로 나온 말 (해석 실패로 말하지 않은 것은 뺀다)."""
+    return [memory.PlazaMessage(s.agent_id, s.decision.to, s.decision.message) for s in says if not s.decision.silent]
 
 
 @dataclass
@@ -108,8 +129,63 @@ class RunResult:
 # ---------------------------------------------------------------- 하루 진행
 
 
-def _fish_phase(world: World, agents: dict[str, BaseAgent], estimate: int, yesterday: int | None) -> list[FishTurn]:
+def _names(world: World) -> dict[str, str]:
+    return {a.id: a.name for a in world.agents}
+
+
+def _trust_names(world: World, agent_id: str) -> dict[str, str] | None:
+    """질문지에 신뢰 점수를 붙일 남은 이웃 (id → 이름). 대화를 끈 마을은 None (P5 질문지 그대로)."""
+    if not world.config.talk.enabled:
+        return None
+    return {a.id: a.name for a in world.alive_agents() if a.id != agent_id}
+
+
+def _plaza_phase(
+    world: World,
+    agents: dict[str, BaseAgent],
+    estimate: int,
+    yesterday: int | None,
+    rng: random.Random,
+) -> list[SayTurn]:
+    """광장: 시드로 섞은 순서대로 한 마디씩. 각자 내 차례 전까지 나온 말 중 들을 수 있는 것만 본다."""
+    alive = world.alive_agents()
+    order = list(alive)
+    rng.shuffle(order)  # 봇 마을에서도 섞어 둔다 (rng 쓰임새가 마을 구성에 따라 흔들리지 않게)
+    names = _names(world)
+    name_to_id = {a.name: a.id for a in world.agents}
+    listeners = {a.id for a in alive}
+    says: list[SayTurn] = []
+    spoken: list[memory.PlazaMessage] = []
+    for agent in order:
+        ctx = SayContext(
+            day=world.day,
+            agent_id=agent.id,
+            money=agent.money,
+            stock_estimate=estimate,
+            yesterday_total_catch=yesterday,
+            memory=memory.memory_text(agent, world.day - 1, trust_names=_trust_names(world, agent.id)),
+            heard=memory.heard_text(spoken, agent.id, names),
+            neighbors=tuple(a.name for a in alive if a.id != agent.id),
+        )
+        raw = agents[agent.id].say(ctx)
+        if raw is None:  # 봇
+            continue
+        decision = validate_say_action(raw, agent.id, name_to_id, listeners, world.config.talk.max_chars)
+        says.append(SayTurn(agent.id, decision))
+        if not decision.silent:
+            spoken.append(memory.PlazaMessage(agent.id, decision.to, decision.message))
+    return says
+
+
+def _fish_phase(
+    world: World,
+    agents: dict[str, BaseAgent],
+    estimate: int,
+    yesterday: int | None,
+    messages: list[memory.PlazaMessage] | None = None,
+) -> list[FishTurn]:
     economy = world.config.economy
+    names = _names(world)
     turns: list[FishTurn] = []
     for agent in world.alive_agents():
         brain = agents[agent.id]
@@ -119,7 +195,8 @@ def _fish_phase(world: World, agents: dict[str, BaseAgent], estimate: int, yeste
             money=agent.money,
             stock_estimate=estimate,
             yesterday_total_catch=yesterday,
-            memory=memory.memory_text(agent, world.day - 1),
+            memory=memory.memory_text(agent, world.day - 1, trust_names=_trust_names(world, agent.id)),
+            heard=memory.heard_text(messages or [], agent.id, names),
         )
         first = validate_fish_action(brain.decide_fish(obs), catch_cap(economy, inspected=False))
         if first.kind != INSPECT:
@@ -139,15 +216,27 @@ def run_day(
     agents: dict[str, BaseAgent],
     estimate_rng: random.Random,
     yesterday_total: int | None = None,
+    talk_rng: random.Random | None = None,
 ) -> DayResult:
-    """`world.day` 하루를 진행하고 결과를 돌려준다. 날짜는 올리지 않는다 (`run`이 올린다)."""
+    """`world.day` 하루를 진행하고 결과를 돌려준다. 날짜는 올리지 않는다 (`run`이 올린다).
+
+    talk_rng: 광장 말하기 순서를 섞을 rng. 대화를 켰는데 주지 않으면 설정 시드로 새로 만든다
+    (하루만 돌려 보는 테스트용. 여러 날은 `run`이 하나를 이어 쓴다).
+    """
     stock_start = world.pond.stock
 
     # 1. 아침 공지
     estimate = morning_estimate(stock_start, world.config.pond.estimate_noise, estimate_rng)
 
+    # 2. 광장 (대화를 켠 마을만)
+    says: list[SayTurn] = []
+    if world.config.talk.enabled:
+        rng = talk_rng if talk_rng is not None else make_rng(world.config.seed, "talk_order")
+        says = _plaza_phase(world, agents, estimate, yesterday_total, rng)
+    messages = plaza_messages(says)
+
     # 3. 어획
-    turns = _fish_phase(world, agents, estimate, yesterday_total)
+    turns = _fish_phase(world, agents, estimate, yesterday_total, messages)
     requests = {t.agent_id: t.decision.amount for t in turns}
 
     # 4. 정산 (SPEC 3장 순서)
@@ -160,7 +249,7 @@ def run_day(
     rules.regenerate(world)
 
     # 5. 기억 적기 (오늘 물어본 어부 전원, 오늘 떠난 어부 포함)
-    _remember_day(world, turns, catches, estimate, yesterday_total, left)
+    _remember_day(world, turns, catches, estimate, yesterday_total, left, messages)
 
     # 6. 일기 (남은 어부만. 붕괴한 날·마지막 날에도 써서 믿음이 매일 기록되게 한다)
     diaries = _diary_phase(world, agents)
@@ -179,6 +268,7 @@ def run_day(
         money={a.id: a.money for a in world.agents},
         alive={a.id: a.alive for a in world.agents},
         diaries=diaries,
+        says=says,
     )
 
 
@@ -189,8 +279,10 @@ def _remember_day(
     estimate: int,
     yesterday: int | None,
     left: list[str],
+    messages: list[memory.PlazaMessage] | None = None,
 ) -> None:
     eco = world.config.economy
+    names = _names(world)
     left_names = [world.get_agent(i).name for i in left]
     for t in turns:
         agent = world.get_agent(t.agent_id)
@@ -203,6 +295,9 @@ def _remember_day(
             left_names=[n for n in left_names if n != agent.name],
         )
         memory.remember(agent, world.day, text)
+        plaza = memory.describe_plaza(world.day, messages or [], agent.id, names)
+        if plaza is not None:
+            memory.remember(agent, world.day, plaza)
 
 
 def _diary_phase(world: World, agents: dict[str, BaseAgent]) -> list[memory.DiaryEntry]:
@@ -214,7 +309,7 @@ def _diary_phase(world: World, agents: dict[str, BaseAgent]) -> list[memory.Diar
             day=world.day,
             agent_id=agent.id,
             money=agent.money,
-            memory=memory.memory_text(agent, world.day),
+            memory=memory.memory_text(agent, world.day, trust_names=_trust_names(world, agent.id)),
             neighbors=tuple(a.name for a in alive if a.id != agent.id),
         )
         raw = agents[agent.id].write_diary(ctx)
@@ -268,10 +363,11 @@ def _run_days(
 ) -> RunResult:
     days = world.config.days if days is None else days
     estimate_rng = make_rng(seed, "estimate")
+    talk_rng = make_rng(seed, "talk_order")
     results: list[DayResult] = []
     yesterday: int | None = None
     while True:
-        result = run_day(world, agents, estimate_rng, yesterday)
+        result = run_day(world, agents, estimate_rng, yesterday, talk_rng)
         results.append(result)
         if logger is not None:
             logger.log_day(result, world)
@@ -471,6 +567,20 @@ def format_requests(world: World, result: RunResult) -> str:
     return "\n".join(lines)
 
 
+def format_plaza(world: World, day: DayResult) -> str:
+    """하루 광장을 말한 순서대로. 예: 순자 → 모두: "..." / 영철 → 미란(귓속말): "..." """
+    names = _names(world)
+    lines = []
+    for s in day.says:
+        d = s.decision
+        if d.silent:
+            lines.append(f"  {names[s.agent_id]}: (답을 읽지 못해 말하지 않음)")
+            continue
+        to = "모두" if d.to == TO_ALL else f"{names[d.to]}(귓속말)"
+        lines.append(f'  {names[s.agent_id]} → {to}: "{d.message}"' + (" *" if d.clamped else ""))
+    return "\n".join(lines) if lines else "  (말한 사람 없음)"
+
+
 def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp: str, runs_dir: Path) -> int:
     if config.llm is None:
         print("설정 파일에 llm 항목이 없습니다.")
@@ -511,7 +621,10 @@ def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp:
         base_url, config.llm.temperature, meter=llm.CostMeter(config.llm.cost_cap_usd), record=record
     )
     agents = build_llm_agents(config, caller, models)
-    print(f"LLM 마을: {village_label(models)} · 시드 {seed} · 성격 문구 {'켬' if config.llm.persona_enabled else '끔'}")
+    print(
+        f"LLM 마을: {village_label(models)} · 시드 {seed} · 성격 문구 {'켬' if config.llm.persona_enabled else '끔'}"
+        f" · 광장 대화 {'켬' if config.talk.enabled else '끔'}"
+    )
 
     def progress(d: DayResult) -> None:
         print(f"  {d.day}일째 끝: 총어획 {d.total_catch}, 저녁 재고 {d.stock_end}{' (붕괴)' if d.collapsed else ''}",
@@ -531,6 +644,9 @@ def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp:
     print(format_table(world, result))
     print("\n어부 답 (요청 마릿수)")
     print(format_requests(world, result))
+    if config.talk.enabled:
+        print("\n1일째 광장 (말한 순서, *: 잘렸거나 받는 사람을 몰라 모두에게로 바꿈)")
+        print(format_plaza(world, result.days[0]))
     failed = sum(1 for c in calls if c.parse_error)
     avg_ms = sum(c.latency_ms for c in calls) / len(calls) if calls else 0
     print(

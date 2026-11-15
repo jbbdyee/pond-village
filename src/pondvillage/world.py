@@ -42,6 +42,17 @@ class EconomyConfig:
 
 
 @dataclass(frozen=True)
+class TalkConfig:
+    """광장 대화 설정 (SPEC 3장 광장). 끄면 광장 단계를 통째로 건너뛴다.
+
+    설정 파일에 talk 칸이 없으면 끈 것으로 본다 (P5까지의 설정 파일이 그대로 돌게).
+    """
+
+    enabled: bool = False
+    max_chars: int = 200  # 한 마디 최대 글자 수. 넘으면 코드가 자른다 (2026-11-15 사용자 승인)
+
+
+@dataclass(frozen=True)
 class AgentSpec:
     """어부 한 명의 고정 소개. 실험 내내 바뀌지 않는다."""
 
@@ -72,6 +83,7 @@ class Config:
     days: int
     seed: int
     llm: LLMConfig | None = None  # 봇만 돌릴 때는 없어도 된다
+    talk: TalkConfig = field(default_factory=TalkConfig)  # 광장 대화 (칸이 없으면 끔)
 
     def model_for(self, agent: AgentSpec) -> str:
         """이 어부를 움직일 모델: 어부 칸의 model, 없으면 기본 모델."""
@@ -103,6 +115,7 @@ def config_from_dict(raw: dict) -> Config:
             days=raw["run"]["days"],
             seed=raw["run"]["seed"],
             llm=LLMConfig(**raw["llm"]) if raw.get("llm") else None,
+            talk=TalkConfig(**raw["talk"]) if raw.get("talk") else TalkConfig(),
         )
     except (KeyError, TypeError) as e:
         raise ConfigError(f"설정 파일 항목이 빠졌거나 이름이 틀렸습니다: {e}") from e

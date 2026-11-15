@@ -31,6 +31,25 @@ class Observation:
     exact_stock: int | None = None
     # 질문지에 붙일 기억 글 (memory.memory_text). 봇은 쓰지 않는다. 1일째 아침에는 빈 글.
     memory: str = ""
+    # 오늘 아침 광장에서 오간 말 중 내가 들은 것 (memory.heard_text). 대화를 끈 마을·봇은 빈 글.
+    heard: str = ""
+
+
+@dataclass(frozen=True)
+class SayContext:
+    """광장에서 말하기 직전에 어부가 아는 것 (P6).
+
+    아침 공지 + 내 돈 + 어제까지의 기억 + 오늘 광장에서 나보다 먼저 나온 말 중 내가 들은 것.
+    """
+
+    day: int
+    agent_id: str
+    money: int
+    stock_estimate: int
+    yesterday_total_catch: int | None
+    memory: str
+    heard: str  # 내 차례 전까지 들은 말. 첫 번째로 말하면 빈 글
+    neighbors: tuple[str, ...]  # 귓속말할 수 있는 남은 이웃 이름
 
 
 @dataclass(frozen=True)
@@ -58,6 +77,10 @@ class BaseAgent(ABC):
     @abstractmethod
     def decide_fish(self, obs: Observation) -> dict:
         """어획 페이즈 행동을 SPEC 4장 모양의 dict로 돌려준다."""
+
+    def say(self, ctx: SayContext) -> dict | None:
+        """광장 한 마디 (SPEC 4장 say JSON). 봇은 말하지 않으므로 기본은 None."""
+        return None
 
     def write_diary(self, ctx: DiaryContext) -> dict | None:
         """저녁 일기 (SPEC 4장 일기 JSON). 봇은 일기를 쓰지 않으므로 기본은 None."""

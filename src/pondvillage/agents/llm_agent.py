@@ -6,6 +6,7 @@
 - persona_enabled가 False면 이름만 준다. 성격 문구가 섞이면 차이가 모델 탓인지 가릴 수 없어서다.
 - 기억(P5): 아침 질문지에 "최근 2일 기록 + 지금까지의 요약 + 지난 일기의 내 생각"을 붙인다(memory.py).
   저녁에는 일기(write_diary)를 쓴다. 일기 답 검사·반영은 러너가 memory.validate_diary로 한다.
+- 광장(P6): 어획 전에 한 마디(say). 내 차례 전까지 들은 말을 보고 말한다. 검사는 actions.validate_say_action.
 - 넣지 않는 것: 지속 가능한 양(스스로 알아내는지가 관찰 대상), 전체 일수(끝을 알면 몰아 잡기 쉬움),
   다른 어부의 모델 이름.
 
@@ -19,9 +20,9 @@ from functools import cache
 from pathlib import Path
 
 from pondvillage.actions import PARSE_ERROR_KEY
-from pondvillage.agents.base import BaseAgent, DiaryContext, Observation
+from pondvillage.agents.base import BaseAgent, DiaryContext, Observation, SayContext
 from pondvillage.llm import LLMCaller
-from pondvillage.logger import PHASE_DIARY, PHASE_FISH, PHASE_FISH_AFTER_INSPECT
+from pondvillage.logger import PHASE_DIARY, PHASE_FISH, PHASE_FISH_AFTER_INSPECT, PHASE_SAY
 from pondvillage.memory import SUMMARY_MAX_CHARS
 from pondvillage.world import Config
 
@@ -71,12 +72,39 @@ def diary_user_prompt(name: str, persona: str | None, ctx: DiaryContext) -> str:
     )
 
 
-def fish_user_prompt(name: str, persona: str | None, obs: Observation, inspect_cap: int) -> str:
-    """오늘 아침 상황. persona가 None이면 이름만."""
-    if obs.yesterday_total_catch is None:
-        yesterday = "오늘이 첫날이라 어제 기록은 없다."
+def say_system_prompt(config: Config) -> str:
+    """광장 질문지의 규칙 설명 + 말하기 JSON 모양 (P6). 협력하라는 말은 넣지 않는다 (스스로 맞추는지가 관찰 대상)."""
+    return load_prompt("say_system").format(rules=rules_text(config), max_chars=config.talk.max_chars)
+
+
+def _yesterday_line(total: int | None) -> str:
+    if total is None:
+        return "오늘이 첫날이라 어제 기록은 없다."
+    return f"어제 마을 전체 어획 {total}마리."
+
+
+def say_user_prompt(name: str, persona: str | None, ctx: SayContext) -> str:
+    if ctx.heard:
+        heard = f"[지금까지 광장에서 들은 말]\n{ctx.heard}\n"
     else:
-        yesterday = f"어제 마을 전체 어획 {obs.yesterday_total_catch}마리."
+        heard = "아직 아무도 말하지 않았다. 네가 처음으로 말한다.\n"
+    return load_prompt("say_user").format(
+        name=name,
+        persona_line=f" {persona}" if persona else "",
+        memory_block=ctx.memory,
+        day=ctx.day,
+        estimate=ctx.stock_estimate,
+        yesterday_line=_yesterday_line(ctx.yesterday_total_catch),
+        money=ctx.money,
+        neighbors=", ".join(ctx.neighbors) if ctx.neighbors else "없음",
+        heard_block=heard,
+    )
+
+
+def fish_user_prompt(name: str, persona: str | None, obs: Observation, inspect_cap: int) -> str:
+    """오늘 아침 상황. persona가 None이면 이름만. 오늘 광장에서 들은 말이 있으면 붙인다 (P6)."""
+    yesterday = _yesterday_line(obs.yesterday_total_catch)
+    heard = f"[오늘 아침 광장에서 들은 말]\n{obs.heard}\n" if obs.heard else ""
     inspect = ""
     if obs.exact_stock is not None:
         inspect = (
@@ -91,6 +119,7 @@ def fish_user_prompt(name: str, persona: str | None, obs: Observation, inspect_c
         estimate=obs.stock_estimate,
         yesterday_line=yesterday,
         money=obs.money,
+        heard_block=heard,
         inspect_line=inspect,
     )
 
@@ -114,6 +143,7 @@ class LLMAgent(BaseAgent):
         self.persona = persona  # None이면 이름만 (persona_enabled: false)
         self.system = fish_system_prompt(config)
         self.diary_system = diary_system_prompt(config)
+        self.say_system = say_system_prompt(config)
         eco = config.economy
         self.inspect_cap = math.floor(eco.max_catch_per_day * eco.inspect_catch_factor)
 
@@ -127,6 +157,20 @@ class LLMAgent(BaseAgent):
         phase = PHASE_FISH if obs.exact_stock is None else PHASE_FISH_AFTER_INSPECT
         reply = self.caller.ask_json(
             self.messages_for(obs), model=self.model, day=obs.day, agent_id=self.agent_id, phase=phase
+        )
+        if reply.data is None:
+            return {PARSE_ERROR_KEY: reply.parse_error}
+        return reply.data
+
+    def say_messages_for(self, ctx: SayContext) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": self.say_system},
+            {"role": "user", "content": say_user_prompt(self.name, self.persona, ctx)},
+        ]
+
+    def say(self, ctx: SayContext) -> dict:
+        reply = self.caller.ask_json(
+            self.say_messages_for(ctx), model=self.model, day=ctx.day, agent_id=self.agent_id, phase=PHASE_SAY
         )
         if reply.data is None:
             return {PARSE_ERROR_KEY: reply.parse_error}

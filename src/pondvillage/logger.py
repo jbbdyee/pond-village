@@ -2,8 +2,9 @@
 
 실행 결과를 `runs/*.db` 파일 하나(SQLite)에 남긴다. 표 모양은 SPEC 7장 그대로다.
 - 채우는 표: runs(실행 소개), days(날마다 연못), agent_days(날마다 어부), actions(어부가 고른 행동),
+  messages(광장에서 나온 말, P6. to는 "all" 또는 받는 어부 id),
   llm_calls(LLM 호출 한 번마다: 보낸 질문·받은 답·토큰·시간·비용·해석 실패)
-- 빈 표만 만들어 두는 것: messages(P6 대화), votes(3단계 투표)
+- 빈 표만 만들어 두는 것: votes(3단계 투표)
 
 기록원은 판정하지 않는다. 러너가 넘겨준 하루 결과(`DayResult`)를 표 칸에 옮겨 적기만 한다.
 하루가 끝날 때마다 저장을 확정(commit)하므로, 중간에 멈춰도 그날까지는 남는다.
@@ -36,6 +37,7 @@ STATUS_ABORTED_COST = "aborted_cost"  # 비용 상한을 넘어 멈춤 (SPEC 8�
 PHASE_FISH = "fish"  # 어획 페이즈 첫 답
 PHASE_FISH_AFTER_INSPECT = "fish_after_inspect"  # 연못을 확인한 뒤 다시 고른 답
 PHASE_DIARY = "diary"  # 저녁 일기 (P5)
+PHASE_SAY = "say"  # 아침 광장 한 마디 (P6)
 
 # SPEC 7장. messages의 from/to는 SQL 예약어라 따옴표로 감싼다.
 SCHEMA = """
@@ -184,6 +186,24 @@ class RunLogger:
                     result.catches.get(agent.id, 0), beliefs, trust,
                 ),
             )
+        # 광장: 말한 순서대로. 해석 실패(말 안 함)는 actions에만 남고 messages에는 없다.
+        for say in result.says:
+            d = say.decision
+            if not d.silent:
+                self.conn.execute(
+                    'INSERT INTO messages (run_id, day, "from", "to", text, is_rumor) VALUES (?, ?, ?, ?, ?, 0)',
+                    (rid, day, say.agent_id, d.to, d.message),
+                )
+            self.conn.execute(
+                "INSERT INTO actions (run_id, day, phase, agent_id, action_json, reason, parse_error, clamped)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    rid, day, PHASE_SAY, say.agent_id,
+                    json.dumps({} if d.silent else {"action": "say", "to": d.to, "message": d.message},
+                               ensure_ascii=False),
+                    d.reason, d.parse_error, int(d.clamped),
+                ),
+            )
         for turn in result.turns:
             answers = [(PHASE_FISH, turn.first), (PHASE_FISH_AFTER_INSPECT, turn.decision)] if turn.inspected \
                 else [(PHASE_FISH, turn.decision)]
@@ -270,7 +290,7 @@ def format_run_days(conn: sqlite3.Connection, run_id: str) -> str:
     return _table(rows)
 
 
-TOKEN_PHASES = ((PHASE_FISH, "어획"), (PHASE_DIARY, "일기"))
+TOKEN_PHASES = ((PHASE_SAY, "광장"), (PHASE_FISH, "어획"), (PHASE_DIARY, "일기"))
 
 
 def format_tokens(rows: list[tuple[int, str, int | None]]) -> str:
@@ -285,13 +305,15 @@ def format_tokens(rows: list[tuple[int, str, int | None]]) -> str:
             continue
         by.setdefault((day, phase), []).append(tokens)
     days = sorted({d for d, _ in by})
+    # 기록이 하나도 없는 단계(예: 대화를 끈 마을의 광장)는 칸을 만들지 않는다
+    phases = [(p, label) for p, label in TOKEN_PHASES if any(ph == p for _, ph in by)]
     header = ["날"]
-    for _, label in TOKEN_PHASES:
+    for _, label in phases:
         header += [f"{label} 평균", f"{label} 최대"]
     table = [header]
     for d in days:
         row = [str(d)]
-        for phase, _ in TOKEN_PHASES:
+        for phase, _ in phases:
             vals = by.get((d, phase))
             row += [f"{sum(vals) / len(vals):.0f}", str(max(vals))] if vals else ["-", "-"]
         table.append(row)

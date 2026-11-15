@@ -20,6 +20,10 @@ run:
   days: 30
   seed: 1
 
+talk:
+  enabled: true               # 아침 광장 대화. false면 광장 단계를 건너뛴다 (비교용 "대화 끈 마을")
+  max_chars: 200              # 한 마디 최대 글자 수. 넘으면 코드가 자른다
+
 llm:
   base_url: "http://localhost:11434/v1"   # Ollama 로컬
   model: "qwen2.5:7b"                     # 개발용 (2026-11-15 3개 비교 후 결정, NOTES 참고)

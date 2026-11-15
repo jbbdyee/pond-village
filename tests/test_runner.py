@@ -444,7 +444,8 @@ def test_main_llm_mixed_village_end_to_end(tmp_path, monkeypatch, capsys):
     ])
     out = capsys.readouterr().out
     assert code == 0
-    assert "3qwen2.5:7b+2gemma3:4b" in out and "LLM 호출 20번" in out
+    # base.yaml은 대화를 켠다: 하루 광장 5 + 어획 5 + 일기 5
+    assert "3qwen2.5:7b+2gemma3:4b" in out and "LLM 호출 30번" in out and "광장 대화 켬" in out
     assert "질문지 길이" in out
     (db,) = tmp_path.glob("*_llm-mixed_s1.db")
     conn = sqlite3.connect(db)

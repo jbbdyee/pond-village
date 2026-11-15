@@ -8,8 +8,11 @@
 + 지난 일기의 내 생각(beliefs) 한 줄. 날이 지나도 이 묶음은 커지지 않는다.
 (요약을 날마다 쌓으면 30일에 28줄이 되어 결국 계속 늘어서, 하나를 고쳐 쓰게 했다. 2026-11-15 사용자 승인)
 
-신뢰(trust)는 일기에서 받아 기록만 한다. 대화가 없는 지금은 이웃이 몇 마리 잡는지 알 길이 없어서,
-어획 질문지에는 P6(광장 대화)부터 넣는다.
+광장(P6): 모두에게 한 말은 남은 어부 전원이, 귓속말은 보낸 사람과 받는 사람만 듣는다(SPEC 3장).
+들은 말은 그날 사실 기억에 한 줄로 들어간다 (말한 사람 이름 + 누구에게 + 말).
+
+신뢰(trust)는 일기에서 받는다. 질문지에는 대화를 켠 마을에서만 넣는다(SPEC 5장, P6부터).
+대화를 끈 마을은 이웃에 대해 알 길이 없어 근거 없는 숫자라서, P5와 같은 질문지를 그대로 쓴다.
 
 판정(몇 마리를 받는지 등)은 여기서 하지 않는다. 일기 답의 모양 검사·범위 자르기만 한다.
 """
@@ -19,7 +22,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from pondvillage.actions import NONE, PARSE_ERROR_KEY
+from pondvillage.actions import NONE, PARSE_ERROR_KEY, TO_ALL
 from pondvillage.world import Agent, Beliefs, MemoryItem
 
 KIND_EVENT = "event"
@@ -66,6 +69,55 @@ def describe_day(
     return " ".join(parts)
 
 
+# ---------------------------------------------------------------- 광장에서 들은 말 (P6)
+
+
+@dataclass(frozen=True)
+class PlazaMessage:
+    """광장에서 나온 말 하나 (검사를 마친 뒤). to는 TO_ALL 또는 받는 어부 id."""
+
+    from_id: str
+    to: str
+    text: str
+
+    def heard_by(self, agent_id: str) -> bool:
+        """이 어부가 이 말을 들었는지. 귓속말은 보낸 사람과 받는 사람만 안다."""
+        return self.to == TO_ALL or agent_id in (self.to, self.from_id)
+
+
+def heard_lines(messages: list[PlazaMessage], agent_id: str, names: dict[str, str]) -> list[str]:
+    """이 어부가 들은 말만, 말한 순서대로. 예: 순자(모두에게): "..." / 나(영철에게 귓속말): "..." """
+    lines = []
+    for m in messages:
+        if not m.heard_by(agent_id):
+            continue
+        who = "나" if m.from_id == agent_id else names[m.from_id]
+        if m.to == TO_ALL:
+            where = "모두에게"
+        elif m.to == agent_id:
+            where = "나에게 귓속말"
+        else:
+            where = f"{names[m.to]}에게 귓속말"
+        lines.append(f'{who}({where}): "{m.text}"')
+    return lines
+
+
+def heard_text(messages: list[PlazaMessage], agent_id: str, names: dict[str, str]) -> str:
+    """질문지에 붙일 "오늘 광장에서 들은 말" 글. 들은 말이 없으면 빈 글."""
+    return "\n".join(heard_lines(messages, agent_id, names))
+
+
+def describe_plaza(day: int, messages: list[PlazaMessage], agent_id: str, names: dict[str, str]) -> str | None:
+    """그날 들은 말을 기억 한 줄로. 들은 말이 없으면 None (기억에 적지 않는다)."""
+    lines = heard_lines(messages, agent_id, names)
+    return f"{day}일째 광장: " + " / ".join(lines) if lines else None
+
+
+def trust_line(trust: dict[str, float], names: dict[str, str]) -> str:
+    """신뢰 점수를 이름으로 한 줄. names에 있는 사람(남은 이웃)만. 예: 순자 0.8, 영철 0.5"""
+    return ", ".join(f"{names[i]} {v:.1f}" for i, v in trust.items() if i in names)
+
+
 def remember(agent: Agent, day: int, text: str) -> None:
     agent.memory.append(MemoryItem(day, text, KIND_EVENT))
 
@@ -89,11 +141,17 @@ def beliefs_line(beliefs: Beliefs) -> str:
     )
 
 
-def memory_text(agent: Agent, upto_day: int, recent_days: int = RECENT_DAYS) -> str:
+def memory_text(
+    agent: Agent,
+    upto_day: int,
+    recent_days: int = RECENT_DAYS,
+    trust_names: dict[str, str] | None = None,
+) -> str:
     """질문지에 붙일 기억 글. upto_day까지 있었던 일만 본다.
 
     어획(아침) 때는 upto_day = 어제, 일기(저녁) 때는 upto_day = 오늘.
     원본은 (upto_day - recent_days, upto_day] 범위만, 그 전은 일기 요약 하나로만 들어간다.
+    trust_names(남은 이웃 id → 이름)를 주면 지난 일기의 신뢰 점수도 한 줄 붙인다 (대화를 켠 마을만).
     기억이 하나도 없으면(1일째 아침) 빈 글.
     """
     blocks: list[str] = []
@@ -105,6 +163,10 @@ def memory_text(agent: Agent, upto_day: int, recent_days: int = RECENT_DAYS) -> 
         blocks.append("[최근 기록]\n" + "\n".join(m.text for m in recent))
     if agent.beliefs is not None:
         blocks.append("[지난 일기에 적은 내 생각]\n" + beliefs_line(agent.beliefs))
+    if trust_names is not None:
+        line = trust_line(agent.trust, trust_names)
+        if line:
+            blocks.append("[지난 일기에 적은 이웃 신뢰 (0~1)]\n" + line)
     return "\n".join(blocks) + "\n" if blocks else ""
 
 
