@@ -3,39 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>연못마을 미리보기</title>
+<title>연못마을</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Jua&family=Noto+Sans+KR:wght@400;500;700&display=swap">
 <!--
-  마을 미리보기 화면 (대시보드 v0) 틀.
+  마을 화면 (대시보드 v1) 틀.
   직접 열지 말고 `uv run python -m pondvillage.export` 로 데이터를 넣은 runs/village.html 을 연다.
-  숫자(재고·잡은 수·돈·생존·대화)는 전부 기록에서 오고, 걸어 다니는 길과 표정은 보기 좋게 넣은 연출이다.
+  숫자(재고·잡은 수·돈·생존)와 말·일기·속마음·모델은 전부 기록에서 오고, 걸어 다니는 길과 표정은 보기 좋게 넣은 연출이다.
+  두 가지 보기: 🎭 광장 극장(마을 하나를 대화·일기와 함께 따라 읽기) / 🔀 두 마을 비교(v0 화면).
 -->
 <style>
 :root{
-  --bg:#fdf3ea; --fg:#4a3b33; --muted:#8a776b; --line:#efdccd;
-  --panel:#fffaf4; --chip:#fbeee2; --coin:#c98510; --rumor:#8b5cf6; --rumor-bg:#efe6ff;
+  --bg:#fdf3ea; --fg:#4a3b33; --muted:#86705f; --line:#efdccd;
+  --panel:#fffaf4; --chip:#fbeee2; --coin:#b87807; --rumor:#8b5cf6; --rumor-bg:#efe6ff;
+  --whisper:#7b61c9; --whisper-bg:#efe8ff; --fact:#d9534f; --fact-bg:#ffece6; --now:#ffcf5c;
   --btn:#ffcf5c; --btn-fg:#5a3d10; --btn-sh:#e0a93a; --ghost:#f6e4d6; --ghost-sh:#e5cdb9;
   --a:#f08a5d; --b:#3fae78;
   --cute:"Jua","Noto Sans KR",sans-serif; --sans:"Noto Sans KR",system-ui,sans-serif;
 }
 @media (prefers-color-scheme: dark){:root{
-  --bg:#211b20; --fg:#f4e8de; --muted:#b7a69a; --line:#3a3036; --coin:#f5c542; --rumor:#b79bff; --rumor-bg:#3a3050;
+  --bg:#211b20; --fg:#f4e8de; --muted:#b9a698; --line:#3a3036; --coin:#f5c542; --rumor:#b79bff; --rumor-bg:#3a3050;
+  --whisper:#b8a2ff; --whisper-bg:#352c4a; --fact:#ff8b80; --fact-bg:#46282a; --now:#e0b440;
   --panel:#2e262c; --chip:#3a3037; --ghost:#43383f; --ghost-sh:#2a2227; --a:#ff9f75; --b:#5fd39a; color-scheme:dark}}
 *{box-sizing:border-box}
+[hidden]{display:none!important}
 body{margin:0;background:var(--bg);color:var(--fg);font-family:var(--sans);line-height:1.55;font-size:14px;
   padding:20px max(16px,env(safe-area-inset-right,0px)) 28px max(16px,env(safe-area-inset-left,0px))}
-main{max-width:1120px;margin:0 auto;display:grid;gap:14px}
+main{max-width:1180px;margin:0 auto;display:grid;gap:14px}
 h1{font-family:var(--cute);font-weight:400;font-size:2rem;margin:0}
 .lead{margin:0;color:var(--muted)}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;background:var(--panel);border:3px solid var(--line);border-radius:20px;padding:10px 14px;font-family:var(--cute);font-size:1.1rem}
-.bar button{font-family:var(--cute);font-size:1rem;border:0;border-radius:14px;padding:6px 14px;cursor:pointer;background:var(--btn);color:var(--btn-fg);box-shadow:0 4px 0 var(--btn-sh)}
-.bar button:active{transform:translateY(3px);box-shadow:0 1px 0 var(--btn-sh)}
-.bar button.ghost{background:var(--ghost);color:var(--fg);box-shadow:0 4px 0 var(--ghost-sh)}
-.bar button[aria-pressed="true"]{background:#9fdcf5;color:#123a4a;box-shadow:0 4px 0 #64b5d6}
-.bar button:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--coin);outline-offset:2px}
+button{font-family:var(--cute);font-size:1rem;border:0;border-radius:14px;padding:6px 14px;cursor:pointer;background:var(--btn);color:var(--btn-fg);box-shadow:0 4px 0 var(--btn-sh)}
+button:active{transform:translateY(3px);box-shadow:0 1px 0 var(--btn-sh)}
+button.ghost{background:var(--ghost);color:var(--fg);box-shadow:0 4px 0 var(--ghost-sh)}
+button[aria-pressed="true"],button[aria-selected="true"]{background:#9fdcf5;color:#123a4a;box-shadow:0 4px 0 #64b5d6}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:3px solid var(--coin);outline-offset:2px}
 .bar .sep{width:2px;height:22px;background:var(--line);border-radius:2px}
 .bar input[type=range]{flex:1 1 160px;accent-color:#64b5d6;min-width:120px}
 .bar .daybox{background:var(--chip);border-radius:12px;padding:2px 12px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.modes{display:flex;gap:8px;flex-wrap:wrap}
+.modes button{font-size:1.05rem}
 .games{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .game{background:var(--panel);border:3px solid var(--line);border-radius:26px;padding:12px;display:grid;gap:10px;min-width:0}
 .game.A{border-color:color-mix(in srgb,var(--a) 45%,var(--line))}
@@ -56,14 +62,59 @@ canvas{width:100%;height:auto;display:block;border-radius:18px;background:#b5e3a
 .swatch{width:9px;height:9px;border-radius:50%;display:inline-block;flex:none}
 .folk .c{color:var(--coin);font-variant-numeric:tabular-nums;font-weight:700}
 .folk .e{color:var(--muted);font-size:.72rem}
+.folk .m,.mtag{font-size:.68rem;background:var(--panel);border:1px solid var(--line);border-radius:6px;padding:0 5px;justify-self:center;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--fg)}
 .folk.gone{opacity:.45}
+.folk.speak{outline:3px solid var(--now)}
 .log{background:var(--chip);border-radius:14px;padding:6px 12px;font-size:.86rem;color:var(--muted);min-height:2.7em}
 .log b{color:var(--fg);font-weight:500}
 .chat{display:grid;gap:4px;font-size:.82rem;max-height:120px;overflow-y:auto}
 .msg{background:var(--chip);border-radius:10px;padding:3px 10px}
 .msg.rumor{background:var(--rumor-bg);border:2px solid var(--rumor)}
+.msg.whisper{background:var(--whisper-bg);border:2px dashed var(--whisper)}
 .msg .who{font-family:var(--cute)}
 .quiet{color:var(--muted);font-size:.82rem}
+
+/* 광장 극장 */
+.theater{background:var(--panel);border:3px solid var(--line);border-radius:26px;padding:14px;display:grid;gap:12px;min-width:0}
+main>*,#app>div>*,.theater>*{min-width:0} /* 긴 타임라인이 페이지를 옆으로 밀지 않게: 안에서만 옆으로 넘긴다 */
+.stage{display:grid;grid-template-columns:minmax(0,1.5fr) minmax(0,1fr);gap:14px;align-items:start}
+.stage .left{display:grid;gap:10px;min-width:0}
+.fact{background:var(--fact-bg);border-radius:14px;padding:6px 12px;font-size:.84rem}
+.fact b{color:var(--fact);font-family:var(--cute);font-weight:400;font-size:.95rem}
+.fact .note{color:var(--muted);font-size:.76rem}
+.side{display:grid;gap:0;min-width:0}
+.tabs{display:flex;gap:6px;flex-wrap:wrap}
+.tabs button{border-radius:14px 14px 0 0;box-shadow:none;padding:5px 14px}
+.panel{background:var(--chip);border-radius:0 16px 16px 16px;padding:10px;display:grid;gap:7px;max-height:560px;overflow-y:auto;font-size:.86rem;align-content:start}
+.panel h3{margin:2px 0 0;font-family:var(--cute);font-weight:400;font-size:1.05rem}
+.row{background:var(--panel);border-radius:12px;padding:6px 10px;display:grid;gap:2px;min-width:0;border:2px solid transparent}
+.row.now{border-color:var(--now)}
+.row.whisper{background:var(--whisper-bg);border:2px dashed var(--whisper)}
+.row.whisper.now{border-style:solid}
+.row .head{display:flex;gap:6px;align-items:center;flex-wrap:wrap}
+.row .head b{font-family:var(--cute);font-weight:400;font-size:.98rem}
+.row .to{color:var(--muted);font-size:.76rem}
+.row .why{color:var(--muted);font-size:.8rem}
+.row p{margin:0;overflow-wrap:anywhere}
+.badge{font-size:.72rem;border-radius:6px;padding:0 6px;background:var(--chip);white-space:nowrap}
+.badge.warn{background:var(--fact-bg);color:var(--fact)}
+.chips{display:flex;gap:4px;flex-wrap:wrap}
+.chips span{font-size:.72rem;background:var(--chip);border-radius:6px;padding:0 6px}
+details summary{cursor:pointer;color:var(--muted);font-size:.78rem}
+details p{margin-top:4px;color:var(--fg);font-size:.82rem}
+.subtabs{display:flex;gap:6px;flex-wrap:wrap}
+.subtabs button{font-size:.85rem;padding:3px 10px;box-shadow:0 3px 0 var(--ghost-sh)}
+.timeline{display:flex;gap:8px;overflow-x:auto;padding:2px 2px 8px}
+.tday{flex:0 0 146px;background:var(--chip);border:3px solid transparent;border-radius:16px;padding:6px 9px;display:grid;gap:4px;text-align:left;font-family:var(--sans);font-size:.76rem;color:var(--fg);box-shadow:none;cursor:pointer}
+.tday:active{transform:none;box-shadow:none}
+.tday.on{border-color:var(--now)}
+.tday .h{display:flex;justify-content:space-between;gap:6px;white-space:nowrap;font-family:var(--cute);font-size:.95rem}
+.tday .h span+span{font-family:var(--sans);font-size:.74rem;align-self:center}
+.tday .meter{height:8px}
+.dots{display:flex;gap:3px;flex-wrap:wrap;min-height:10px}
+.dots i{width:10px;height:10px;border-radius:50%;border:1.5px solid rgba(90,70,60,.6)}
+.dots i.w{border-style:dashed;background:transparent!important;border-color:var(--whisper)}
+
 .charts{display:grid;grid-template-columns:1fr 1fr;gap:16px}
 .chart{background:var(--panel);border:3px solid var(--line);border-radius:22px;padding:12px 14px;min-width:0}
 .chart h2{margin:0 0 4px;font-family:var(--cute);font-weight:400;font-size:1.15rem}
@@ -76,20 +127,22 @@ svg text{font-family:var(--sans);fill:var(--muted)}
 .notes h3{margin:0 0 4px;font-family:var(--cute);font-weight:400;font-size:1.05rem}
 .notes p{margin:0;color:var(--muted)}
 .empty{background:var(--panel);border:3px dashed var(--line);border-radius:20px;padding:24px;text-align:center}
+@media (max-width:900px){.stage{grid-template-columns:1fr}.panel{max-height:none}}
 @media (max-width:820px){.games,.charts,.notes{grid-template-columns:1fr}}
+@media (max-width:480px){.folks{grid-template-columns:repeat(3,1fr)}}
 </style>
 </head>
 <body>
 <main>
 <header style="display:grid;gap:4px">
-  <h1>🐟 연못마을 미리보기</h1>
-  <p class="lead">저장된 실행 두 개를 골라 나란히 재생한다. 아침에 광장에 모였다가 연못에서 낚시하고, 생선가게에서 팔고, 밥집에서 밥값을 내고, 밤에 물고기가 늘어난다. 숫자는 전부 실제 기록이다.</p>
+  <h1>🐟 연못마을</h1>
+  <p class="lead">🎭 광장 극장에서는 마을 하나를 날짜별로 따라 읽는다. 아침 광장에서 누가 누구에게 무슨 말을 했는지, 어부마다 어떤 모델인지, 무엇을 생각하며 몇 마리를 잡았는지, 저녁에 일기에 무엇을 썼는지가 함께 보인다. 🔀 두 마을 비교에서는 실행 두 개를 나란히 재생한다. 숫자와 글은 전부 실제 기록이다.</p>
 </header>
 <div id="app"></div>
 <div class="notes">
-  <div><h3>기록에서 오는 것</h3><p>날짜별 연못 재고·총어획·붕괴(days), 어부별 돈·생존·잡은 수(agent_days), 광장 대화(messages), 끝난 이유(runs.status).</p></div>
-  <div><h3>연출인 것</h3><p>걸어 다니는 길, 표정, 동전·밥그릇. 시뮬레이션에는 위치가 없다. 하루 안의 돈 변화는 판매(+잡은 수) → 밥값(−생활비) 순서로 나눠 보여 준다.</p></div>
-  <div><h3>아직 없는 것</h3><p>봇은 말을 하지 않아서 광장 대화는 비어 있다(P6부터). 소문 표시와 일기는 2단계에서 붙인다.</p></div>
+  <div><h3>기록에서 오는 것</h3><p>연못 재고·총어획·붕괴(days), 어부별 돈·생존·잡은 수(agent_days), 광장 말과 귓속말(messages), 속마음·연못 확인·일기(actions), 어부별 모델(llm_calls에서 실제로 부른 모델), 끝난 이유(runs.status).</p></div>
+  <div><h3>연출인 것</h3><p>걸어 다니는 길, 표정, 동전·밥그릇, 말풍선이 뜨는 시간. 시뮬레이션에는 위치가 없다. 하루 안의 돈 변화는 판매(+잡은 수) → 밥값(−생활비) 순서로 나눠 보여 준다.</p></div>
+  <div><h3>판정하지 않는 것</h3><p>"어제 실제 기록"은 말 옆에 놓아 두기만 한다. 누가 틀린 말을 했는지는 화면이 정하지 않는다(소문 판정은 2단계). 일기가 300자를 넘어 잘린 날은 ✂️ 표시와 함께 잘리기 전 원문을 펼쳐 볼 수 있다.</p></div>
 </div>
 </main>
 
@@ -101,13 +154,19 @@ const BOT={greedy:"탐욕 봇",coop:"협력 봇",random:"랜덤 봇"};
 const SHIRT=["#ff8a80","#ffc163","#7fb2ff","#c9a0ff","#6fd6a0"];
 const HAIR=["#6b4a3a","#a0603a","#3d3438","#c0703a","#5a4636"];
 const ROOF=["#ff9d8a","#ffcb6b","#8fbaff","#cfa8ff","#86dcae"];
-const INK="#5a463c",RUMOR="#8b5cf6";
+const INK="#5a463c",RUMOR="#8b5cf6",WHISPER="#7b61c9";
 const W=320,H=260,S=2.5;
 
 // ---------- 하루 시간표 (0~1) ----------
-const SEG={home:[0,.03],toQ:[.03,.1],plaza:[.1,.28],toP:[.28,.33],fish:[.33,.47],toT:[.47,.53],sell:[.53,.58],toE:[.58,.63],eat:[.63,.69],toH:[.69,.76],night:[.76,1.001]};
+// 대화가 있는 실행은 광장 시간을 늘린다(말풍선을 읽을 수 있게). 순서는 같다.
+const ORDER=["home","toQ","plaza","toP","fish","toT","sell","toE","eat","toH","night"];
+const DUR_V0={home:.03,toQ:.07,plaza:.18,toP:.05,fish:.14,toT:.06,sell:.05,toE:.05,eat:.06,toH:.07,night:.24};
+const DUR_TALK={...DUR_V0,plaza:1.3};
+function buildSeg(d){const tot=ORDER.reduce((a,k)=>a+d[k],0);let t=0;const s={};ORDER.forEach(k=>{s[k]=[t/tot,(t+d[k])/tot];t+=d[k]});s.night[1]=1.001;return s}
+let SEG=buildSeg(DUR_V0);
+const at=(name,k)=>SEG[name][0]+(SEG[name][1]-SEG[name][0])*k; // 그 구간의 k 지점
 const LABEL={home:"아침",toQ:"광장으로",plaza:"광장",toP:"연못으로",fish:"낚시",toT:"생선가게로",sell:"팔기",toE:"밥집으로",eat:"밥",toH:"집으로",night:"밤"};
-function phaseName(ph){for(const k in SEG)if(ph<SEG[k][1])return k;return"night"}
+function phaseName(ph){for(const k of ORDER)if(ph<SEG[k][1])return k;return"night"}
 
 // ---------- 마을 배치 ----------
 const PCX=160,PCY=114,PRX=84,PRY=38;
@@ -184,57 +243,90 @@ function drawFolk(c,x,y,i,bob,mood,fishing,t){
     const by=y-22+Math.sin(t/220+i)*1.2;c.strokeStyle="rgba(90,70,60,.5)";c.lineWidth=.6;c.beginPath();c.moveTo(x+12,y-10);c.lineTo(x+12,by);c.stroke();
     blob(c,"#ff8a80",INK,.8,()=>c.arc(x+12,by,1.8,0,7))}
 }
-function wrap(c,text,max){const out=[];let line="";for(const ch of text){if(c.measureText(line+ch).width>max&&line){out.push(line);line=ch}else line+=ch}if(line)out.push(line);return out.slice(0,3)}
+function wrap(c,text,max,maxLines){const out=[];let line="";for(const ch of text){if(c.measureText(line+ch).width>max&&line){out.push(line);line=ch}else line+=ch}if(line)out.push(line);
+  if(out.length>maxLines){const keep=out.slice(0,maxLines);keep[maxLines-1]=keep[maxLines-1].slice(0,-1)+"…";return keep}return out}
 function bubble(c,x,y,text,o={}){
-  c.font="8.5px Jua, sans-serif";const lines=wrap(c,text,o.max||120);const w=Math.max(...lines.map(l=>c.measureText(l).width))+12,h=lines.length*10+5;
-  x=Math.max(w/2+2,Math.min(W-w/2-2,x));const top=y-h-3;
+  c.font="8.5px Jua, sans-serif";const lines=wrap(c,text,o.max||120,o.lines||3);const head=o.head||"";
+  const w=Math.max(...lines.map(l=>c.measureText(l).width),head?c.measureText(head).width*.85:0)+12,h=lines.length*10+5+(head?9:0);
+  x=Math.max(w/2+2,Math.min(W-w/2-2,x));const top=Math.max(2,y-h-3);
   c.save();if(o.dash)c.setLineDash([2,2]);blob(c,o.fill||"#ffffff",o.stroke||INK,o.lw||1,()=>c.roundRect(x-w/2,top,w,h,6));c.restore();
   blob(c,o.fill||"#ffffff",null,0,()=>{c.moveTo(x-3,y-3.6);c.lineTo(x+3,y-3.6);c.lineTo(x,y+1)});
-  c.fillStyle=INK;c.textAlign="center";lines.forEach((l,k)=>c.fillText(l,x,top+10+k*10));
+  c.textAlign="center";let ty=top+10;
+  if(head){c.font="7px Jua, sans-serif";c.fillStyle="#8a776b";c.fillText(head,x,ty-1);ty+=9;c.font="8.5px Jua, sans-serif"}
+  c.fillStyle=INK;lines.forEach((l,k)=>c.fillText(l,x,ty+k*10));
 }
 function pop(c,x,y,text,k){c.globalAlpha=Math.max(0,1-k);c.font="8px Jua, sans-serif";c.textAlign="center";c.fillStyle=INK;c.fillText(text,x,y-k*10);c.globalAlpha=1}
 
 // ---------- 기록 → 그 순간의 마을 ----------
 const ECO=DATA?DATA.economy:{start_money:0,fish_price:1,daily_cost:5};
 const AGENTS=DATA?DATA.agents.slice(0,5):[];
+const IDS=AGENTS.map(a=>a.id);
+const nameOf=id=>{const i=IDS.indexOf(id);return i>=0?AGENTS[i].name:id};
+const colorOf=id=>{const i=IDS.indexOf(id);return i>=0?SHIRT[i%5]:INK};
+const hasTalk=r=>!!(r&&r.messages&&r.messages.length);
+function modelOf(run,id){return run.models&&run.models[id]?run.models[id]:(BOT[run.condition]||"모델 기록 없음")}
+function villageModel(run){const m=run.models||{},vals=IDS.map(id=>m[id]).filter(Boolean);
+  if(!vals.length)return BOT[run.condition]||run.condition;
+  const cnt={};vals.forEach(v=>cnt[v]=(cnt[v]||0)+1);const ks=Object.keys(cnt);
+  return ks.length===1?`${ks[0]} × ${cnt[ks[0]]}`:ks.map(k=>`${k} ${cnt[k]}`).join(" + ")}
+function runLabel(r){return`${villageModel(r)} · 시드 ${r.seed} · ${r.days.length}일 · ${STATUS[r.status]||r.status}`}
 function dayInfo(run,d){
   const n=run.days.length,ended=d>n,rec=run.days[Math.min(d,n)-1],prev=Math.min(d,n)>1?run.days[Math.min(d,n)-2]:null;
   const by=r=>Object.fromEntries((r?r.agents:[]).map(a=>[a.id,a]));
   const now=by(rec),before=by(prev);
   const folks=AGENTS.map(a=>{const x=now[a.id]||{money:0,alive:false,catch:0},b=before[a.id];
     return{present:prev?(b?b.alive:false):true,catch:x.catch,alive:x.alive,money0:prev?(b?b.money:x.money):ECO.start_money,money1:x.money}});
-  return{rec,ended,folks,after:rec.stock_start-rec.total_catch,msgs:(run.messages||[]).filter(m=>m.day===rec.day)};
+  return{rec,prev,ended,folks,after:rec.stock_start-rec.total_catch,msgs:(run.messages||[]).filter(m=>m.day===rec.day)};
 }
+const esc=s=>String(s??"").replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
+const side2color=s=>s==="A"?"#ffc2a6":s==="B"?"#a6e8c6":"#ffe3a0";
+function fishLabel(f){if(!f)return"기록 없음";if(f.parse_error)return(f.inspected?"🔍 확인 → ":"")+"⚠️ 답을 못 읽어 안 잡음";
+  const pre=f.inspected?"🔍 연못 확인 → ":"";return pre+(f.action==="fish"?`🎣 ${f.amount}마리 요청`:"🙅 안 잡음")}
 
 // ---------- 마을 하나 ----------
-function makeVillage(side,root){
-  root.className="game "+side;
-  root.innerHTML=`<div class="pick"><span class="dot" style="background:var(--${side.toLowerCase()})"></span><select aria-label="마을 ${side} 실행 고르기"></select></div>
-    <div class="top"><b class="name"></b><span class="pill"></span></div>
-    <canvas width="${W*S}" height="${H*S}"></canvas>
-    <div class="hud"><span>🐟 연못</span><div class="meter"><i></i></div><span class="stock"></span></div>
-    <div class="folks">${AGENTS.map((a,i)=>`<div class="folk"><span class="n"><i class="swatch" style="background:${SHIRT[i%5]}"></i>${a.name}</span><span class="c"></span><span class="e"></span></div>`).join("")}</div>
-    <div class="log"></div>
-    <div><div class="quiet" style="margin-bottom:4px">💬 오늘 광장 대화</div><div class="chat"></div></div>`;
-  const R=rng(side==="A"?3:9);
-  const v={side,root,c:root.querySelector("canvas").getContext("2d"),sel:root.querySelector("select"),
+function makeVillage(side,root,theater){
+  root.className=theater?"theater":"game "+side;
+  const folks=`<div class="folks">${AGENTS.map((a,i)=>`<div class="folk"><span class="n"><i class="swatch" style="background:${SHIRT[i%5]}"></i>${esc(a.name)}</span><span class="m"></span><span class="c"></span><span class="e"></span></div>`).join("")}</div>`;
+  const scene=`<canvas width="${W*S}" height="${H*S}" aria-label="마을 그림"></canvas>
+    <div class="hud"><span>🐟 연못</span><div class="meter"><i></i></div><span class="stock"></span></div>`;
+  root.innerHTML=theater
+    ?`<div class="pick"><span>🎭</span><select aria-label="따라 읽을 실행 고르기" id="pickT"></select></div>
+      <div class="top"><b class="name"></b><span class="pill"></span></div>
+      <div class="stage"><div class="left">${scene}${folks}<div class="fact"></div><div class="log"></div></div>
+        <div class="side"><div class="tabs" role="tablist">
+          <button class="ghost" role="tab" data-tab="talk" type="button">💬 대화</button>
+          <button class="ghost" role="tab" data-tab="folk" type="button">👥 어부</button>
+          <button class="ghost" role="tab" data-tab="diary" type="button">📔 일기</button></div>
+          <div class="panel" role="tabpanel"></div></div></div>
+      <div><div class="quiet" style="margin-bottom:4px">📅 날짜별 타임라인 · 누르면 그날 아침 광장으로 간다 (동그라미 = 말 한 마디, 점선 = 귓속말)</div><div class="timeline"></div></div>`
+    :`<div class="pick"><span class="dot" style="background:var(--${side.toLowerCase()})"></span><select aria-label="마을 ${side} 실행 고르기" id="pick${side}"></select></div>
+      <div class="top"><b class="name"></b><span class="pill"></span></div>${scene}${folks}<div class="log"></div>
+      <div><div class="quiet" style="margin-bottom:4px">💬 오늘 광장 대화</div><div class="chat"></div></div>`;
+  const R=rng(side==="A"?3:side==="B"?9:5);
+  const v={side,theater,root,c:root.querySelector("canvas").getContext("2d"),sel:root.querySelector("select"),
     fish:Array.from({length:20},(_,k)=>({a:R()*6.28,r:.25+R()*.6,sp:(.4+R()*.6)*(R()<.5?-1:1),col:["#ffa970","#ffc96b","#ff9db0"][k%3]})),
-    tufts:Array.from({length:34},()=>[R()*W,56+R()*200]),run:null,chatKey:""};
+    tufts:Array.from({length:34},()=>[R()*W,56+R()*200]),run:null,chatKey:"",panelKey:"",tab:"talk",diaryWhen:"auto"};
   v.flowers=[];while(v.flowers.length<18){const x=6+R()*308,y=60+R()*190;if(((x-PCX)/(PRX+16))**2+((y-PCY)/(PRY+16))**2<1)continue;if(x<60&&y>186)continue;if(x>190&&y>176)continue;if(Math.abs(x-PLAZA.x)<60&&Math.abs(y-PLAZA.y)<26)continue;v.flowers.push([x,y,["#ff9db0","#ffd36b","#c9a0ff","#ffffff"][Math.floor(R()*4)]])}
+  if(theater){root.querySelectorAll(".tabs button").forEach(b=>b.onclick=()=>{v.tab=b.dataset.tab;v.panelKey=""});
+    root.querySelector(".panel").addEventListener("click",e=>{const b=e.target.closest("[data-when]");if(b){v.diaryWhen=b.dataset.when;v.panelKey=""}})}
   return v;
 }
-function runLabel(r){return`${BOT[r.condition]||r.condition} · 시드 ${r.seed} · ${r.days.length}일 · ${STATUS[r.status]||r.status}`}
+function setName(v){v.root.querySelector(".name").textContent=(v.theater?"":v.side+" · ")+villageModel(v.run)+" 마을 · 시드 "+v.run.seed}
+
+function speakerAt(info,name,ph,ended){const msgs=info.msgs,slot=(SEG.plaza[1]-SEG.plaza[0])/Math.max(1,msgs.length);
+  return!ended&&name==="plaza"&&msgs.length?Math.min(msgs.length-1,Math.floor((ph-SEG.plaza[0])/slot)):-1}
 
 function draw(v,d,ph,t){
   const run=v.run,c=v.c;if(!run)return;
   const info=dayInfo(run,d),rec=info.rec,ended=info.ended;
   const name=ended?"night":phaseName(ph);
   const afterFish=ended||ph>=SEG.fish[1];
+  const N0=SEG.night[0],NL=SEG.night[1]-SEG.night[0],REGEN=N0+NL*.25;
   let stock=rec.stock_start;
   if(ended)stock=rec.collapsed?info.after:rec.stock_end;
   else if(name==="fish")stock=Math.round(lerp(rec.stock_start,info.after,(ph-SEG.fish[0])/(SEG.fish[1]-SEG.fish[0])));
-  else if(afterFish)stock=ph>=.82&&!rec.collapsed?Math.round(lerp(info.after,rec.stock_end,Math.min(1,(ph-.82)/.1))):info.after;
-  const dry=rec.collapsed&&afterFish?(ended?1:Math.min(1,(ph-SEG.fish[1])/.2)):0;
+  else if(afterFish)stock=ph>=REGEN&&!rec.collapsed?Math.round(lerp(info.after,rec.stock_end,Math.min(1,(ph-REGEN)/(NL*.4)))):info.after;
+  const dry=rec.collapsed&&afterFish?(ended?1:Math.min(1,(ph-SEG.fish[1])/Math.max(.01,SEG.toE[0]-SEG.fish[1]))):0;
   c.setTransform(S,0,0,S,0,0);
   c.fillStyle="#b5e3a0";c.fillRect(0,0,W,H);
   c.strokeStyle="#9fd48a";c.lineWidth=1;v.tufts.forEach(([x,y])=>{c.beginPath();c.moveTo(x-2,y);c.lineTo(x-1,y-3);c.moveTo(x,y);c.lineTo(x,y-4);c.moveTo(x+2,y);c.lineTo(x+1,y-3);c.stroke()});
@@ -249,42 +341,50 @@ function draw(v,d,ph,t){
   v.fish.forEach((f,i)=>{if(i>=nf)return;const a=f.a+t/1000*f.sp*.55;drawFish(c,PCX+Math.cos(a)*(PRX-16)*f.r,PCY+2+Math.sin(a)*(PRY-12)*f.r,-Math.sign(f.sp)||1,f.col)});
   [[12,80],[308,74],[310,140],[14,150]].forEach(([x,y])=>drawTree(c,x,y));
   drawPlaza(c);drawStall(c,STALL.x,STALL.y);
-  const night=ended?0:ph<.03?(1-ph/.03)*.38:ph>.76?Math.min(.38,(ph-.76)/.05*.38):0;
+  const H0=SEG.home[1];
+  const night=ended?0:ph<H0?(1-ph/H0)*.38:ph>N0?Math.min(.38,(ph-N0)/(NL*.2)*.38):0;
   drawDiner(c,DINER.x,DINER.y,night>0);
   const here=info.folks.map(f=>f.present);
   const home=info.folks.map(f=>ended?f.alive:f.present);
-  HOUSE_X.forEach((x,i)=>i<AGENTS.length&&drawHouse(c,x,4,i,!home[i]&&(ended||ph>=.76||!here[i])));
-  if(!ended&&ph>.6&&ph<.76)drawSmoke(c,DINER.x+37,DINER.y-6,t,7);
+  HOUSE_X.forEach((x,i)=>i<AGENTS.length&&drawHouse(c,x,4,i,!home[i]&&(ended||ph>=N0||!here[i])));
+  if(!ended&&ph>SEG.toE[0]&&ph<N0)drawSmoke(c,DINER.x+37,DINER.y-6,t,7);
   // 광장 대화 (기록이 있을 때만)
-  const ids=AGENTS.map(a=>a.id),msgs=info.msgs,slot=(SEG.plaza[1]-SEG.plaza[0])/Math.max(1,msgs.length);
-  const mk=!ended&&name==="plaza"&&msgs.length?Math.min(msgs.length-1,Math.floor((ph-SEG.plaza[0])/slot)):-1;
-  const msg=mk>=0?msgs[mk]:null,speaker=msg?ids.indexOf(msg.from):-1;
+  const mk=speakerAt(info,name,ph,ended);
+  const msg=mk>=0?info.msgs[mk]:null,speaker=msg?IDS.indexOf(msg.from):-1,hearer=msg&&msg.to!=="all"?IDS.indexOf(msg.to):-1;
   // 사람
   const pos=AGENTS.map((a,i)=>ended?{x:PTS(i).H[0],y:PTS(i).H[1],walking:false}:posAt(i,ph));
   const order=AGENTS.map((a,i)=>i).sort((a,b)=>pos[a].y-pos[b].y);
   const eaters=[];
+  if(hearer>=0&&speaker>=0){c.save();c.setLineDash([2,2]);c.strokeStyle=WHISPER;c.lineWidth=1.2;c.beginPath();
+    c.moveTo(pos[speaker].x,pos[speaker].y-4);c.quadraticCurveTo((pos[speaker].x+pos[hearer].x)/2,pos[speaker].y-22,pos[hearer].x,pos[hearer].y-4);c.stroke();c.restore()}
   order.forEach(i=>{const f=info.folks[i];
     if(ended?!f.alive:!f.present)return;
-    if(!ended&&!f.alive&&ph>=.76)return; // 오늘 밤 떠남
+    if(!ended&&!f.alive&&ph>=N0)return; // 오늘 밤 떠남
     const p=pos[i],bob=p.walking?Math.abs(Math.sin(t/130+i))*2.2:0;
     let mood=rec.collapsed&&afterFish?"sad":name==="eat"?"yum":f.money0<0?"worry":"ok";
     if(i===speaker)mood="talk";
     if(name==="eat")eaters.push(i);
     drawFolk(c,p.x,p.y,i,bob,mood,name==="fish",t);
+    if(i===hearer){c.font="9px sans-serif";c.textAlign="center";c.fillText("👂",p.x+9,p.y-10)}
     if(name==="fish"&&(ph-SEG.fish[0])/(SEG.fish[1]-SEG.fish[0])>.7)pop(c,p.x,p.y-16,"+"+f.catch+"🐟",((ph-SEG.fish[0])/(SEG.fish[1]-SEG.fish[0])-.7)/.3);
     if(name==="sell"&&f.catch>0)pop(c,p.x,p.y-16,"🪙+"+f.catch*ECO.fish_price,(ph-SEG.sell[0])/(SEG.sell[1]-SEG.sell[0]));
     if(name==="eat")pop(c,p.x,p.y-16,"🪙-"+ECO.daily_cost,(ph-SEG.eat[0])/(SEG.eat[1]-SEG.eat[0]));
     if(!ended&&!f.alive&&name==="toH")bubble(c,p.x,p.y-15,"🧳 마을을 떠나야겠다…",{fill:"#e9f2ff"});
   });
   drawTable(c,eaters,t);
-  if(msg){const p=pos[speaker]||{x:PLAZA.x,y:PLAZA.y-10};const to=msg.to&&msg.to!=="all"?"🤫 ":"";
-    bubble(c,p.x,p.y-15,to+msg.text,msg.is_rumor?{fill:"#efe6ff",stroke:RUMOR,lw:1.5,dash:!!to}:{dash:!!to})}
+  if(msg){const p=pos[speaker]||{x:PLAZA.x,y:PLAZA.y-10};
+    const head=(AGENTS[speaker]?AGENTS[speaker].name:msg.from)+(hearer>=0?" 🤫 → "+AGENTS[hearer].name+"만":" → 모두")+(v.theater?" · "+modelOf(run,msg.from):"");
+    const o={head,dash:hearer>=0,max:v.theater?200:130,lines:v.theater?4:3};
+    if(hearer>=0)Object.assign(o,{fill:"#efe8ff",stroke:WHISPER,lw:1.3});
+    if(msg.is_rumor)Object.assign(o,{fill:"#efe6ff",stroke:RUMOR,lw:1.5});
+    bubble(c,p.x,p.y-15,msg.text,o)}
   const total=rec.total_catch;
   if(!ended&&name==="sell")bubble(c,STALL.x+50,STALL.y-4,total?"오늘 판 물고기 🐟"+total+"마리":"팔 물고기가 없다…",{fill:total?"#fff6d6":"#e9f2ff"});
   if(!ended&&name==="eat")bubble(c,DINER.x-4,DINER.y-6,"🍚 밥값 🪙"+ECO.daily_cost+"씩",{fill:"#ffe9e4"});
   if(!ended&&rec.collapsed&&afterFish&&ph<SEG.toT[1]+.03)bubble(c,PCX,PCY-4,"남은 물고기 "+info.after+"마리 → 연못 붕괴 💧",{fill:"#fffaf4",lw:1.5});
-  if(!ended&&!rec.collapsed&&ph>=.82&&ph<.95&&rec.stock_end!==info.after)bubble(c,PCX,PCY-4,"밤새 물고기가 늘었다 ✨ "+info.after+" → "+rec.stock_end,{fill:"#e2f7ff"});
-  const dusk=!ended&&ph>.62&&ph<.8?Math.sin((ph-.62)/.18*Math.PI)*.16:0;
+  if(!ended&&!rec.collapsed&&ph>=REGEN&&ph<N0+NL*.8&&rec.stock_end!==info.after)bubble(c,PCX,PCY-4,"밤새 물고기가 늘었다 ✨ "+info.after+" → "+rec.stock_end,{fill:"#e2f7ff"});
+  const D0=SEG.toE[0],D1=N0+NL*.15;
+  const dusk=!ended&&ph>D0&&ph<D1?Math.sin((ph-D0)/(D1-D0)*Math.PI)*.16:0;
   if(dusk){c.fillStyle="rgba(255,160,120,"+dusk+")";c.fillRect(0,0,W,H)}
   if(night){c.fillStyle="rgba(60,60,130,"+night+")";c.fillRect(0,0,W,H);
     c.fillStyle="rgba(255,226,140,"+Math.min(1,night*2.4)+")";HOUSE_X.forEach((x,i)=>{if(!home[i])return;c.beginPath();c.roundRect(x+5,26,6,6,2);c.roundRect(x+25,26,6,6,2);c.fill()})}
@@ -302,25 +402,86 @@ function draw(v,d,ph,t){
   const doing=ended?"":{home:"집",toQ:"광장으로",plaza:"광장",toP:"연못으로",fish:"🎣 낚시",toT:"가게로",sell:"🐟 파는 중",toE:"밥집으로",eat:"🍚 밥",toH:"집으로",night:"💤"}[name];
   r.querySelectorAll(".folk").forEach((el,i)=>{const f=info.folks[i];
     const money=ended?f.money1:ph>=SEG.eat[0]+.01?f.money1:ph>=SEG.sell[0]+.01?f.money0+f.catch*ECO.fish_price:f.money0;
-    const gone=ended?!f.alive:!f.present;el.classList.toggle("gone",gone);
+    const gone=ended?!f.alive:!f.present;el.classList.toggle("gone",gone);el.classList.toggle("speak",i===speaker);
+    const m=modelOf(run,IDS[i]);const mEl=el.querySelector(".m");if(mEl.textContent!==m){mEl.textContent=m;mEl.title="모델: "+m}
     el.querySelector(".c").textContent="🪙 "+money;
     el.querySelector(".e").textContent=gone?"🧳 떠남":afterFish&&!ended?`🐟${f.catch} · ${doing}`:doing||"집";});
   const lg=r.querySelector(".log");
   lg.innerHTML=ended?`<b>기록 끝.</b> ${run.days.length}일째에 끝났다 (${STATUS[run.status]||run.status}).`
-    :ph<SEG.toP[0]?`<b>${rec.day}일째 아침.</b> 연못에 물고기 ${rec.stock_start}마리. 광장에 모인다.`
+    :ph<SEG.toQ[0]?`<b>${rec.day}일째 아침.</b> 연못에 물고기 ${rec.stock_start}마리. 광장으로 간다.`
+    :ph<SEG.toP[0]?`<b>${rec.day}일째 광장.</b> ${info.msgs.length?`말 ${info.msgs.length}마디${mk>=0?` 중 ${mk+1}번째`:""}.`:"아무도 말하지 않는다."}`
     :ph<SEG.toT[0]?`<b>낚시.</b> 모두 합쳐 ${total}마리를 잡았다. 연못 ${rec.stock_start} → ${info.after}.`
     :ph<SEG.toE[0]?`<b>생선가게.</b> 🐟 1마리에 🪙${ECO.fish_price}. 잡은 만큼 판다.`
-    :ph<.76?`<b>밥집.</b> 하루 밥값 🪙${ECO.daily_cost}씩 낸다.`
+    :ph<N0?`<b>밥집.</b> 하루 밥값 🪙${ECO.daily_cost}씩 낸다.`
     :rec.collapsed?`<b>밤.</b> 남은 물고기 ${info.after}마리 (${DATA.pond.collapse_below} 미만) → 연못 붕괴. 다시 늘지 않는다.`
-    :`<b>밤.</b> 남은 ${info.after}마리가 늘어 ${rec.stock_end}마리가 된다.`;
-  const key=run.run_id+"|"+rec.day+"|"+ended;
-  if(key!==v.chatKey){v.chatKey=key;const box=r.querySelector(".chat");
-    box.innerHTML=ended?'<span class="quiet">기록이 끝났다.</span>':info.msgs.length?info.msgs.map(m=>{const fi=ids.indexOf(m.from),ti=ids.indexOf(m.to);
-      return`<div class="msg${m.is_rumor?" rumor":""}"><span class="who"><i class="swatch" style="background:${SHIRT[fi%5]||INK}"></i>${AGENTS[fi]?AGENTS[fi].name:m.from}</span> <span class="quiet">${ti>=0?"🤫 → "+AGENTS[ti].name:"→ 모두"}</span> ${esc(m.text)}</div>`}).join("")
-      :'<span class="quiet">조용하다. 봇은 말을 하지 않는다 (광장 대화는 P6부터).</span>'}
+    :`<b>밤.</b> 남은 ${info.after}마리가 늘어 ${rec.stock_end}마리가 된다. 어부들은 일기를 쓴다.`;
+  if(v.theater)drawTheaterSide(v,info,name,ph,mk);
+  else{const key=run.run_id+"|"+rec.day+"|"+ended;
+    if(key!==v.chatKey){v.chatKey=key;const box=r.querySelector(".chat");
+      box.innerHTML=ended?'<span class="quiet">기록이 끝났다.</span>':info.msgs.length?info.msgs.map(msgLine).join("")
+        :'<span class="quiet">조용하다. 이 마을은 광장에서 말하지 않는다.</span>'}}
 }
-const esc=s=>String(s).replace(/[&<>"]/g,ch=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[ch]));
-const side2color=s=>s==="A"?"#ffc2a6":"#a6e8c6";
+function msgLine(m){const ti=IDS.indexOf(m.to),w=m.to!=="all"&&ti>=0;
+  return`<div class="msg${w?" whisper":""}${m.is_rumor?" rumor":""}"><span class="who"><i class="swatch" style="background:${colorOf(m.from)}"></i>${esc(nameOf(m.from))}</span> <span class="quiet">${w?"🤫 → "+esc(AGENTS[ti].name)+"만":"→ 모두"}</span> ${esc(m.text)}</div>`}
+
+// ---------- 광장 극장: 오른쪽 탭 · 어제 기록 · 타임라인 ----------
+function drawTheaterSide(v,info,name,ph,mk){
+  const run=v.run,rec=info.rec,ended=info.ended,day=rec.day;
+  const evening=ended||ph>=SEG.eat[0];
+  const when=v.diaryWhen==="auto"?(evening?"tonight":"lastnight"):v.diaryWhen;
+  const key=[run.run_id,day,ended,v.tab,mk,when,ph>=SEG.fish[0]].join("|");
+  if(key===v.panelKey)return;v.panelKey=key;
+  const r=v.root;
+  r.querySelectorAll(".tabs button").forEach(b=>b.setAttribute("aria-selected",b.dataset.tab===v.tab));
+  // 어제 실제 기록 (말 옆에 놓기만, 판정 없음)
+  const fact=r.querySelector(".fact");
+  if(info.prev){const parts=info.prev.agents.map(a=>`${esc(nameOf(a.id))} ${a.alive||a.catch?a.catch:"-"}`).join(" · ");
+    fact.innerHTML=`📋 <b>어제(${info.prev.day}일째) 실제 기록</b> 잡은 수 ${parts} (합 ${info.prev.total_catch}) · 연못 저녁 ${info.prev.stock_end}마리<br><span class="note">광장에서 들은 말과 나란히 보라고 놓아 둔 기록이다. 화면은 맞다·틀리다를 판정하지 않는다.</span>`}
+  else fact.innerHTML=`📋 <b>첫날</b> 어제 기록이 없다. 연못 ${rec.stock_start}마리에서 시작한다.`;
+  const panel=r.querySelector(".panel");
+  const fishOf=id=>(run.fish||[]).find(f=>f.day===day&&f.agent===id);
+  const catchOf=id=>{const a=rec.agents.find(x=>x.id===id);return a?a.catch:0};
+  let html="";
+  if(v.tab==="talk"){
+    html+=`<h3>🌅 ${day}일째 아침 광장</h3>`;
+    html+=info.msgs.length?info.msgs.map((m,k)=>{const ti=IDS.indexOf(m.to),w=m.to!=="all"&&ti>=0;
+      return`<div class="row${w?" whisper":""}${k===mk?" now":""}"><div class="head"><i class="swatch" style="background:${colorOf(m.from)}"></i><b>${esc(nameOf(m.from))}</b><span class="to">${w?"🤫 귓속말 → "+esc(AGENTS[ti].name)+"만 들음":"→ 모두에게"}</span><span class="mtag">${esc(modelOf(run,m.from))}</span></div><p>${esc(m.text)}</p></div>`}).join("")
+      :`<div class="row"><p class="why">이날은 아무도 말하지 않았다${hasTalk(run)?"":" (이 마을은 광장 대화를 끈 마을이거나 봇 마을이다)"}.</p></div>`;
+    if(ph>=SEG.fish[0]||ended){html+=`<h3>🎣 낚시 · 모두 합쳐 ${rec.total_catch}마리 (연못 ${rec.stock_start} → ${info.after})</h3>`;
+      html+=IDS.map(id=>{const f=fishOf(id);if(!f)return"";return`<div class="row"><div class="head"><i class="swatch" style="background:${colorOf(id)}"></i><b>${esc(nameOf(id))}</b><span class="badge${f.parse_error?" warn":""}">${fishLabel(f)}</span><span class="to">잡음 ${catchOf(id)}</span></div>${f.reason?`<p class="why">💭 ${esc(f.reason)}</p>`:""}</div>`}).join("")}
+  }else if(v.tab==="folk"){
+    html+=`<h3>👥 ${day}일째 어부들</h3>`;
+    html+=IDS.map((id,i)=>{const f=fishOf(id),a=rec.agents.find(x=>x.id===id)||{},fo=info.folks[i];
+      const dLast=(run.diaries||[]).filter(x=>x.agent===id&&x.day<=day&&!x.parse_error).pop();
+      const trust=dLast&&dLast.trust?Object.entries(dLast.trust).map(([k,val])=>`<span>${esc(nameOf(k))} ${val}</span>`).join(""):"";
+      return`<div class="row"><div class="head"><i class="swatch" style="background:${SHIRT[i%5]}"></i><b>${esc(AGENTS[i].name)}</b><span class="mtag">${esc(modelOf(run,id))}</span><span class="to">🪙 ${fo.money0} → ${a.money??"-"}${a.alive===false?" · 🧳 떠남":""}</span></div>
+        <p>${fishLabel(f)} · 잡음 ${catchOf(id)}</p>${f&&f.reason?`<p class="why">💭 ${esc(f.reason)}</p>`:""}
+        ${trust?`<div class="chips" title="가장 최근 일기에 적은 이웃 신뢰 (0~1)"><span>🤝 신뢰</span>${trust}</div>`:""}</div>`}).join("");
+  }else{
+    const dDay=when==="tonight"?day:day-1;
+    html+=`<div class="subtabs"><button class="ghost" type="button" data-when="lastnight" aria-pressed="${when==="lastnight"}">🌙 어젯밤 일기 (오늘 아침 기억)</button><button class="ghost" type="button" data-when="tonight" aria-pressed="${when==="tonight"}">✍️ 오늘 밤 일기</button></div>`;
+    html+=`<h3>📔 ${dDay>=1?dDay+"일째 저녁 일기":"아직 일기가 없다"}</h3>`;
+    const ds=(run.diaries||[]).filter(x=>x.day===dDay);
+    html+=dDay<1?`<div class="row"><p class="why">첫날 아침에는 기억이 없다.</p></div>`
+      :ds.length?ds.map(x=>{const b=x.beliefs;const real=(run.days.find(dd=>dd.day===x.day)||{agents:[]}).agents.find(a=>a.id===x.agent);
+        return`<div class="row"><div class="head"><i class="swatch" style="background:${colorOf(x.agent)}"></i><b>${esc(nameOf(x.agent))}</b><span class="mtag">${esc(modelOf(run,x.agent))}</span>${real?`<span class="to">실제로 잡은 수 ${real.catch}</span>`:""}${x.full?`<span class="badge warn">✂️ 글 잘림</span>`:x.clamped?`<span class="badge" title="범위를 벗어난 숫자(재고 추정 0~100, 확신·신뢰 0~1 등)를 코드가 맞춰 적었다">🔧 숫자 맞춤</span>`:""}${x.parse_error?`<span class="badge warn">⚠️ 일기를 못 읽음</span>`:""}</div>
+        <p>${esc(x.summary)||'<span class="why">(내용 없음)</span>'}</p>
+        ${x.full?`<details><summary>✂️ 300자를 넘어 잘렸다 · 잘리기 전 원문 보기 (${x.full.length}자)</summary><p>${esc(x.full)}</p></details>`:""}
+        ${b?`<div class="chips"><span>🐟 연못 추정 ${b.estimated_stock}</span><span>👤 1인당 괜찮은 양 ${b.sustainable_guess}</span><span>확신 ${b.confidence}</span></div>`:""}</div>`}).join("")
+      :`<div class="row"><p class="why">${when==="tonight"&&!evening?"아직 저녁이 아니다. 밥을 먹은 뒤 일기를 쓴다.":"이날 일기 기록이 없다 (봇 마을이거나 일기를 쓰기 전에 끝났다)."}</p></div>`;
+  }
+  panel.innerHTML=html;
+  const now=panel.querySelector(".row.now");if(now)now.scrollIntoView({block:"nearest"});
+}
+function renderTimeline(v,day){
+  const run=v.run,box=v.root.querySelector(".timeline");
+  const key=run.run_id+"|"+day;if(box.dataset.key===key)return;box.dataset.key=key;
+  box.innerHTML=run.days.map(d=>{const ms=(run.messages||[]).filter(m=>m.day===d.day);
+    return`<button type="button" class="tday${d.day===day?" on":""}" data-day="${d.day}" aria-label="${d.day}일째로 가기"><span class="h"><span>${d.day}일째</span><span>${d.collapsed?"💧 붕괴":"🐟 "+d.stock_start+"→"+d.stock_end}</span></span>
+      <span class="meter"><i style="width:${Math.max(0,Math.min(100,d.collapsed?d.stock_start-d.total_catch:d.stock_end))}%"></i></span>
+      <span>합 ${d.total_catch}마리 · 말 ${ms.length}</span><span class="dots">${ms.map(m=>`<i class="${m.to!=="all"?"w":""}" style="background:${colorOf(m.from)}" title="${esc(nameOf(m.from))}"></i>`).join("")}</span></button>`}).join("");
+  const on=box.querySelector(".on");if(on)box.scrollLeft=Math.max(0,on.offsetLeft-box.clientWidth/2+66);
+}
 
 // ---------- 비교 그래프 ----------
 function chartSVG(series,max,day,maxDays,fmt){
@@ -338,12 +499,13 @@ function chartSVG(series,max,day,maxDays,fmt){
 }
 const css=n=>getComputedStyle(document.documentElement).getPropertyValue(n).trim();
 function renderCharts(villages,day,maxDays){
-  const stock=villages.map(v=>({color:css("--"+v.side.toLowerCase()),vals:v.run.days.map(d=>d.stock_end)}));
-  const money=villages.map(v=>({color:css("--"+v.side.toLowerCase()),vals:v.run.days.map(d=>{const al=d.agents;return al.length?al.reduce((a,b)=>a+b.money,0)/al.length:0})}));
+  const col=v=>v.theater?css("--coin"):css("--"+v.side.toLowerCase());
+  const stock=villages.map(v=>({color:col(v),vals:v.run.days.map(d=>d.stock_end)}));
+  const money=villages.map(v=>({color:col(v),vals:v.run.days.map(d=>{const al=d.agents;return al.length?al.reduce((a,b)=>a+b.money,0)/al.length:0})}));
   const mTop=Math.max(10,...money.flatMap(o=>o.vals)),mStep=mTop>100?50:10;
   document.getElementById("cStock").innerHTML=chartSVG(stock,DATA.pond.capacity,day,maxDays,v=>v+"마리");
   document.getElementById("cMoney").innerHTML=chartSVG(money,Math.ceil(mTop/mStep/2)*mStep*2,day,maxDays,v=>"🪙"+v.toFixed(1));
-  const leg=villages.map(v=>`<span><i style="background:var(--${v.side.toLowerCase()})"></i>${v.side} · ${runLabel(v.run)}</span>`).join("");
+  const leg=villages.map(v=>`<span><i style="background:${col(v)}"></i>${v.theater?"":v.side+" · "}${esc(runLabel(v.run))}</span>`).join("");
   document.querySelectorAll(".legend").forEach(el=>el.innerHTML=leg);
 }
 
@@ -353,6 +515,7 @@ if(!DATA||!DATA.runs||!DATA.runs.length){
   app.innerHTML=`<div class="empty"><h2 style="font-family:var(--cute);font-weight:400">아직 담긴 기록이 없어요 🐟</h2><p>이 파일은 화면 틀이다. 터미널에서 <code>uv run python -m pondvillage.export</code> 를 실행하고, 만들어진 <code>runs/village.html</code> 을 연다.</p></div>`;
 }else{
   app.innerHTML=`<div style="display:grid;gap:14px">
+  <div class="modes" role="tablist"><button id="mT" class="ghost" role="tab" type="button">🎭 광장 극장</button><button id="mC" class="ghost" role="tab" type="button">🔀 두 마을 비교</button></div>
   <div class="bar">
     <button id="play" type="button">⏸ 멈춤</button>
     <button id="restart" class="ghost" type="button">↺ 처음부터</button>
@@ -362,42 +525,58 @@ if(!DATA||!DATA.runs||!DATA.runs.length){
     <label for="day" style="white-space:nowrap">날짜</label><input id="day" type="range" min="1" max="1" value="1">
     <span id="sun">☀️</span><span class="daybox" id="dayLbl"></span>
   </div>
-  <div class="games"><section id="vA"></section><section id="vB"></section></div>
+  <section id="vT"></section>
+  <div class="games" id="games"><section id="vA"></section><section id="vB"></section></div>
   <div class="charts">
     <div class="chart"><h2>🐟 날짜별 연못 재고 (저녁)</h2><div id="cStock"></div><div class="legend"></div></div>
     <div class="chart"><h2>🪙 어부 평균 돈</h2><div id="cMoney"></div><div class="legend"></div></div>
   </div></div>`;
   const runs=DATA.runs;
-  const villages=[makeVillage("A",document.getElementById("vA")),makeVillage("B",document.getElementById("vB"))];
+  const T=makeVillage("T",document.getElementById("vT"),true);
+  const pair=[makeVillage("A",document.getElementById("vA")),makeVillage("B",document.getElementById("vB"))];
   const files=[...new Set(runs.map(r=>r.file))];
-  const opts=files.map(f=>`<optgroup label="${esc(f)}">${runs.map((r,i)=>r.file===f?`<option value="${i}">${esc(runLabel(r))}</option>`:"").join("")}</optgroup>`).join("");
-  const pick=cond=>{const c=runs.map((r,i)=>[r,i]).filter(([r])=>r.condition===cond&&r.days.length>0);
-    // 가장 최근 파일(이름 앞 시각) → 더 오래 진행한 실행 → 작은 시드
-    const stamp=r=>r.file.slice(0,15);
-    c.sort((a,b)=>stamp(b[0]).localeCompare(stamp(a[0]))||b[0].days.length-a[0].days.length||a[0].seed-b[0].seed);return c.length?c[0][1]:-1};
-  let ia=pick("greedy"),ib=pick("coop");const usable=runs.map((r,i)=>i).filter(i=>runs[i].days.length>0);
-  if(ia<0)ia=usable[0];if(ib<0||ib===ia)ib=usable.find(i=>i!==ia)??ia;
-  villages.forEach((v,k)=>{v.sel.innerHTML=opts;v.sel.value=String(k?ib:ia);v.run=runs[k?ib:ia];
-    v.root.querySelector(".name").textContent=v.side+" · "+(BOT[v.run.condition]||v.run.condition)+" 마을";
+  const opts=files.map(f=>`<optgroup label="${esc(f)}">${runs.map((r,i)=>r.file===f?`<option value="${i}"${r.days.length?"":" disabled"}>${esc(runLabel(r))}</option>`:"").join("")}</optgroup>`).join("");
+  const stamp=r=>r.file.slice(0,15);
+  const usable=runs.map((r,i)=>i).filter(i=>runs[i].days.length>0);
+  // 기본 고르기: 대화가 있는 실행 중 가장 최근 파일 → 그 밖에서 가장 오래 버틴 것과 비교. 대화가 없으면 v0처럼 탐욕·협력 봇
+  const talk=usable.filter(i=>hasTalk(runs[i])).sort((a,b)=>stamp(runs[b]).localeCompare(stamp(runs[a]))||runs[b].days.length-runs[a].days.length);
+  const pickCond=cond=>{const c=usable.filter(i=>runs[i].condition===cond).sort((a,b)=>stamp(runs[b]).localeCompare(stamp(runs[a]))||runs[b].days.length-runs[a].days.length||runs[a].seed-runs[b].seed);return c.length?c[0]:-1};
+  let it=talk.length?talk[0]:usable[0],ia,ib;
+  if(talk.length>1){ia=talk[0];ib=talk.slice(1).sort((a,b)=>runs[b].days.length-runs[a].days.length)[0]}
+  else{ia=pickCond("greedy");ib=pickCond("coop");if(ia<0)ia=usable[0];if(ib<0||ib===ia)ib=usable.find(i=>i!==ia)??ia}
+  const hookup=(v,idx)=>{v.sel.innerHTML=opts;v.sel.value=String(idx);v.run=runs[idx];setName(v);
     v.sel.onchange=()=>{const r=runs[+v.sel.value];if(!r.days.length){v.sel.value=String(runs.indexOf(v.run));return}
-      v.run=r;v.chatKey="";v.root.querySelector(".name").textContent=v.side+" · "+(BOT[r.condition]||r.condition)+" 마을";setup()}});
-  const DAYMS=14000; // 1× 기준 하루 14초let clock=0,speed=1,playing=true,last=performance.now(),maxDays=1,lastChart="";
+      v.run=r;v.chatKey="";v.panelKey="";setName(v);setup()}};
+  hookup(T,it);hookup(pair[0],ia);hookup(pair[1],ib);
+  let mode="theater",clock=0,speed=1,playing=true,last=performance.now(),maxDays=1,lastChart="",DAYMS=14000;
+  const active=()=>mode==="theater"?[T]:pair;
   const slider=document.getElementById("day"),playBtn=document.getElementById("play");
   const reduce=matchMedia("(prefers-reduced-motion: reduce)").matches;
-  function setup(){maxDays=Math.max(...villages.map(v=>v.run.days.length));slider.max=maxDays;clock=Math.min(clock,maxDays*DAYMS-1);lastChart=""}
-  setup();
+  function setup(){const vs=active();const talky=vs.some(v=>hasTalk(v.run));
+    const ph=(clock%DAYMS)/DAYMS,name=phaseName(ph),k=(ph-SEG[name][0])/(SEG[name][1]-SEG[name][0]),d=Math.floor(clock/DAYMS);
+    SEG=buildSeg(talky?DUR_TALK:DUR_V0);DAYMS=talky?30000:14000; // 1× 기준 하루 30초(대화 있음) / 14초
+    clock=(d+at(name,Math.min(1,Math.max(0,k))))*DAYMS;
+    maxDays=Math.max(...vs.map(v=>v.run.days.length));slider.max=maxDays;clock=Math.min(clock,maxDays*DAYMS-1);lastChart="";
+    vs.forEach(v=>{v.panelKey="";v.chatKey=""})}
+  function setMode(m){mode=m;document.getElementById("vT").hidden=m!=="theater";document.getElementById("games").hidden=m==="theater";
+    document.getElementById("mT").setAttribute("aria-selected",m==="theater");document.getElementById("mC").setAttribute("aria-selected",m!=="theater");setup()}
+  const goDay=d=>{clock=((d-1)+(hasTalk(active()[0].run)?SEG.plaza[0]+.0005:at("fish",.5)))*DAYMS};
+  setMode("theater");
   function frame(now){
     const dt=Math.min(100,now-last);last=now;const END=maxDays*DAYMS-1;
     if(playing){clock+=dt*speed;if(clock>=END){clock=END;playing=false;playBtn.textContent="▶ 재생"}}
     const day=Math.floor(clock/DAYMS)+1,ph=(clock%DAYMS)/DAYMS;
-    villages.forEach(v=>draw(v,day,ph,reduce?0:now));
+    active().forEach(v=>{draw(v,day,ph,reduce?0:now);if(v.theater)renderTimeline(v,Math.min(day,v.run.days.length))});
     if(+slider.value!==day)slider.value=day;
     document.getElementById("dayLbl").textContent=`${day}일째 / ${maxDays} · ${LABEL[phaseName(ph)]}`;
-    document.getElementById("sun").textContent=ph<.03||ph>.76?"🌙":ph>.62?"🌇":"☀️";
-    const ck=day+"|"+villages.map(v=>v.run.run_id).join("|");if(ck!==lastChart){lastChart=ck;renderCharts(villages,day,maxDays)}
+    document.getElementById("sun").textContent=ph<SEG.home[1]||ph>SEG.night[0]?"🌙":ph>SEG.toE[0]?"🌇":"☀️";
+    const ck=mode+"|"+day+"|"+active().map(v=>v.run.run_id).join("|");if(ck!==lastChart){lastChart=ck;renderCharts(active(),day,maxDays)}
     requestAnimationFrame(frame);
   }
-  slider.oninput=()=>{clock=(+slider.value-1)*DAYMS+DAYMS*.42}; // 고른 날의 낚시 장면으로
+  slider.oninput=()=>goDay(+slider.value); // 고른 날의 광장(대화 없으면 낚시) 장면으로
+  T.root.querySelector(".timeline").addEventListener("click",e=>{const b=e.target.closest("[data-day]");if(b)goDay(+b.dataset.day)});
+  document.getElementById("mT").onclick=()=>setMode("theater");
+  document.getElementById("mC").onclick=()=>setMode("compare");
   playBtn.onclick=()=>{if(!playing&&clock>=maxDays*DAYMS-1)clock=0;playing=!playing;playBtn.textContent=playing?"⏸ 멈춤":"▶ 재생"};
   document.getElementById("restart").onclick=()=>{clock=0;playing=true;playBtn.textContent="⏸ 멈춤"};
   document.querySelectorAll(".spd").forEach(b=>b.onclick=()=>{speed=+b.dataset.s;document.querySelectorAll(".spd").forEach(x=>x.setAttribute("aria-pressed",x===b))});

@@ -136,3 +136,102 @@ def test_cli_no_runs(tmp_path, capsys):
     cfg.write_text(json.dumps(RAW, ensure_ascii=False), encoding="utf-8")
     assert ex.main(["--runs-dir", str(tmp_path / "runs"), "--config", str(cfg)]) == 1
     assert "기록이 없습니다" in capsys.readouterr().out
+
+
+# ---------- 대시보드 v1 (P7): 모델·속마음·일기 ----------
+
+def _call(conn, day, agent, phase, model, response=None):
+    conn.execute(
+        "INSERT INTO llm_calls (run_id, day, agent_id, phase, model, prompt_tokens, completion_tokens,"
+        " latency_ms, cost_usd, prompt, response, parse_error) VALUES ('c1', ?, ?, ?, ?, 1, 1, 1, 0, '', ?, NULL)",
+        (day, agent, phase, model, response),
+    )
+
+
+def _action(conn, day, phase, agent, body, reason=None, parse_error=None, clamped=0):
+    conn.execute(
+        "INSERT INTO actions (run_id, day, phase, agent_id, action_json, reason, parse_error, clamped)"
+        " VALUES ('c1', ?, ?, ?, ?, ?, ?, ?)",
+        (day, phase, agent, json.dumps(body, ensure_ascii=False), reason, parse_error, clamped),
+    )
+
+
+def test_bot_run_has_no_models_but_has_fish(runs_dir):
+    conn = sqlite3.connect(runs_dir / "coop.db")
+    data = ex.load_run(conn, "c1")
+    conn.close()
+    assert data["models"] == {}  # 봇은 LLM을 부르지 않는다 → 화면은 "협력 봇"으로 표시
+    assert data["diaries"] == []
+    day1 = [f for f in data["fish"] if f["day"] == 1]
+    assert len(day1) == 5
+    assert all(f["action"] == "fish" and f["amount"] == 10 and not f["inspected"] for f in day1)
+
+
+def test_models_are_the_most_called_model_per_fisher(runs_dir):
+    conn = sqlite3.connect(runs_dir / "coop.db")
+    for _ in range(3):
+        _call(conn, 1, "a1", "fish", "qwen2.5:7b")
+    _call(conn, 1, "a1", "fish", "gemma3:4b")  # 섞여 있어도 가장 많이 부른 모델
+    _call(conn, 1, "a2", "say", "gemma3:4b")
+    assert ex.load_models(conn, "c1") == {"a1": "qwen2.5:7b", "a2": "gemma3:4b"}
+    conn.close()
+
+
+def test_fish_separates_inspect_then_nothing_from_plain_zero(runs_dir):
+    conn = sqlite3.connect(runs_dir / "coop.db")
+    conn.execute("DELETE FROM actions WHERE run_id = 'c1'")
+    _action(conn, 1, "fish", "a1", {"action": "inspect_pond", "amount": 0}, "얼마나 남았나 보자")
+    _action(conn, 1, "fish_after_inspect", "a1", {"action": "none", "amount": 0}, "오늘은 쉬자")
+    _action(conn, 1, "fish", "a2", {"action": "none", "amount": 0}, None, parse_error="JSON 아님")
+    _action(conn, 1, "fish", "a3", {"action": "fish", "amount": 7}, "적당히")
+    fish = {f["agent"]: f for f in ex.load_fish(conn, "c1")}
+    conn.close()
+    assert fish["a1"] == {"day": 1, "agent": "a1", "inspected": True, "action": "none", "amount": 0,
+                          "reason": "오늘은 쉬자", "parse_error": False}
+    assert fish["a2"]["inspected"] is False and fish["a2"]["parse_error"] is True
+    assert fish["a3"]["action"] == "fish" and fish["a3"]["amount"] == 7 and fish["a3"]["reason"] == "적당히"
+
+
+def test_diaries_keep_full_text_only_when_summary_was_cut(runs_dir):
+    conn = sqlite3.connect(runs_dir / "coop.db")
+    long = "가" * 320
+    beliefs = {"estimated_stock": 90, "confidence": 0.7, "sustainable_guess": 10,
+               "heard_rumor": False, "believes_rumor": 0.0}
+    _action(conn, 1, "diary", "a1", {"summary": long[:300], "beliefs": beliefs, "trust": {"a2": 0.8}}, clamped=1)
+    _call(conn, 1, "a1", "diary", "qwen2.5:7b", json.dumps({"summary": long}, ensure_ascii=False))
+    _action(conn, 1, "diary", "a2", {"summary": "짧은 일기", "beliefs": beliefs, "trust": {}}, clamped=1)  # 숫자만 맞춤
+    _call(conn, 1, "a2", "diary", "qwen2.5:7b", json.dumps({"summary": "짧은 일기"}, ensure_ascii=False))
+    _action(conn, 1, "diary", "a3", {}, parse_error="summary 없음")
+    _call(conn, 1, "a3", "diary", "qwen2.5:7b", "깨진 답")
+    d = {x["agent"]: x for x in ex.load_diaries(conn, "c1")}
+    conn.close()
+    assert d["a1"]["summary"] == long[:300] and d["a1"]["full"] == long and d["a1"]["clamped"] is True
+    assert d["a1"]["trust"] == {"a2": 0.8} and d["a1"]["beliefs"]["estimated_stock"] == 90
+    assert d["a2"]["clamped"] is True and d["a2"]["full"] is None
+    assert d["a3"]["parse_error"] is True and d["a3"]["summary"] == "" and d["a3"]["full"] is None
+
+
+def test_whisper_receiver_reaches_the_page(runs_dir, tmp_path):
+    conn = sqlite3.connect(runs_dir / "coop.db")
+    conn.execute(
+        'INSERT INTO messages (run_id, day, "from", "to", text, is_rumor) VALUES (?, ?, ?, ?, ?, ?)',
+        ("c1", 1, "a4", "a5", "나는 오늘 10마리만 잡을게", 0),
+    )
+    conn.commit()
+    conn.close()
+    run = next(r for r in ex.collect(runs_dir, CONFIG)["runs"] if r["run_id"] == "c1")
+    assert run["messages"] == [{"day": 1, "from": "a4", "to": "a5", "text": "나는 오늘 10마리만 잡을게", "is_rumor": False}]
+
+
+def test_template_has_no_code_hidden_behind_a_comment():
+    """v0 버그 재발 막기: 줄 주석(//) 뒤에 변수 선언이 붙으면 브라우저가 그 선언을 읽지 않는다."""
+    import re
+    bad = [line for line in ex.TEMPLATE.read_text(encoding="utf-8").splitlines()
+           if re.search(r"//[^\n]*(?:let|const|var)\s+[A-Za-z_$][\w$]*\s*=", line)]
+    assert bad == []
+
+
+def test_template_shows_theater_parts():
+    html = ex.TEMPLATE.read_text(encoding="utf-8")
+    for part in ("광장 극장", "두 마을 비교", 'data-tab="diary"', "timeline", "귓속말", "어제(", "modelOf"):
+        assert part in html

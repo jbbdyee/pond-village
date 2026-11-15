@@ -1,8 +1,9 @@
-"""마을 미리보기 화면 만들기 (대시보드 v0).
+"""마을 화면 만들기 (대시보드 v1).
 
 runs 폴더의 실행 기록(`runs/*.db`)을 모두 읽어, 게임풍 화면 틀(`dashboard/village.html`)에
 데이터를 끼워 넣은 HTML 파일 한 장을 만든다. 서버도 새 라이브러리도 필요 없고,
-만든 파일을 브라우저로 열면 두 마을을 골라 나란히 재생·비교할 수 있다.
+만든 파일을 브라우저로 열면 마을 하나를 광장 대화·일기와 함께 따라 읽거나(광장 극장),
+두 마을을 골라 나란히 재생·비교할 수 있다. 어부마다 실제로 부른 모델도 함께 담는다.
 
 화면은 기록을 "보여 주기만" 한다. 어부가 걸어 다니는 길은 연출이고, 숫자(재고·잡은 수·돈·생존)는
 전부 DB에서 온다. LLM 호출 없음, 비용 0원.
@@ -63,7 +64,101 @@ def load_run(conn: sqlite3.Connection, run_id: str) -> dict:
             (run_id,),
         )
     ]
-    return {"days": days, "messages": messages}
+    return {
+        "days": days, "messages": messages, "models": load_models(conn, run_id),
+        "fish": load_fish(conn, run_id), "diaries": load_diaries(conn, run_id),
+    }
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)).fetchone() is not None
+
+
+def load_models(conn: sqlite3.Connection, run_id: str) -> dict[str, str]:
+    """어부마다 실제로 부른 모델 (llm_calls에서 가장 많이 부른 것). 봇 실행은 호출이 없어 빈 dict.
+
+    설정 파일은 실행 뒤에 바뀔 수 있지만 llm_calls는 그때 실제로 부른 기록이라 이쪽을 믿는다.
+    """
+    if not _table_exists(conn, "llm_calls"):
+        return {}
+    models: dict[str, str] = {}
+    for agent_id, model, _n in conn.execute(
+        "SELECT agent_id, model, COUNT(*) AS n FROM llm_calls WHERE run_id = ? AND agent_id IS NOT NULL"
+        " GROUP BY agent_id, model ORDER BY agent_id, n DESC, model",
+        (run_id,),
+    ):
+        models.setdefault(agent_id, model)
+    return models
+
+
+def load_fish(conn: sqlite3.Connection, run_id: str) -> list[dict]:
+    """날짜·어부별 어획 페이즈 답 하나로 묶기: 연못을 확인했는지, 마지막에 고른 행동, 속마음(reason).
+
+    확인한 날은 첫 답(inspect_pond)과 확인 뒤 답 두 줄이 있다. 화면에서 "확인 → 0"과 "그냥 0"을 나눠 보이려고 묶는다.
+    """
+    out: dict[tuple[int, str], dict] = {}
+    for day, phase, agent_id, action_json, reason, parse_error in conn.execute(
+        "SELECT day, phase, agent_id, action_json, reason, parse_error FROM actions"
+        " WHERE run_id = ? AND phase IN ('fish', 'fish_after_inspect') ORDER BY day, agent_id, rowid",
+        (run_id,),
+    ):
+        try:
+            act = json.loads(action_json or "{}")
+        except json.JSONDecodeError:
+            act = {}
+        row = out.setdefault((day, agent_id), {"day": day, "agent": agent_id, "inspected": False})
+        if phase == "fish" and act.get("action") == "inspect_pond":
+            row["inspected"] = True
+            continue
+        row.update(action=act.get("action", "none"), amount=act.get("amount", 0),
+                   reason=reason or "", parse_error=bool(parse_error))
+    for row in out.values():  # 확인만 남고 다음 답이 없는 경우(옛 기록)
+        row.setdefault("action", "none")
+        row.setdefault("amount", 0)
+        row.setdefault("reason", "")
+        row.setdefault("parse_error", False)
+    return list(out.values())
+
+
+def _full_summary(conn: sqlite3.Connection, run_id: str, day: int, agent_id: str) -> str | None:
+    """잘리기 전 일기 요약 원문 (그날 그 어부의 마지막 일기 호출 답에서). 못 읽으면 None."""
+    if not _table_exists(conn, "llm_calls"):
+        return None
+    row = conn.execute(
+        "SELECT response FROM llm_calls WHERE run_id = ? AND day = ? AND agent_id = ? AND phase = 'diary'"
+        " ORDER BY rowid DESC LIMIT 1",
+        (run_id, day, agent_id),
+    ).fetchone()
+    try:
+        summary = json.loads(row[0]).get("summary") if row and row[0] else None
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return summary if isinstance(summary, str) else None
+
+
+def load_diaries(conn: sqlite3.Connection, run_id: str) -> list[dict]:
+    """저녁 일기 (actions phase=diary). 요약이 잘렸으면 잘리기 전 원문도 함께 (full)."""
+    diaries = []
+    for day, agent_id, action_json, parse_error, clamped in conn.execute(
+        "SELECT day, agent_id, action_json, parse_error, clamped FROM actions"
+        " WHERE run_id = ? AND phase = 'diary' ORDER BY day, agent_id, rowid",
+        (run_id,),
+    ):
+        try:
+            body = json.loads(action_json or "{}")
+        except json.JSONDecodeError:
+            body = {}
+        entry = {
+            "day": day, "agent": agent_id, "summary": body.get("summary") or "",
+            "beliefs": body.get("beliefs"), "trust": body.get("trust") or {},
+            "parse_error": bool(parse_error), "clamped": bool(clamped), "full": None,
+        }
+        if clamped:
+            full = _full_summary(conn, run_id, day, agent_id)
+            if full and len(full) > len(entry["summary"]):
+                entry["full"] = full
+        diaries.append(entry)
+    return diaries
 
 
 def collect(runs_dir: str | Path, config: Config) -> dict:
