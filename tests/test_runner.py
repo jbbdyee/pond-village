@@ -294,3 +294,151 @@ def test_cli_greedy_reports_collapse(capsys):
     main(["--config", str(BASE_YAML), "--bot", "greedy", "--no-log"])
     out = capsys.readouterr().out
     assert "붕괴" in out and "(1일 진행)" in out
+
+
+# ---------------------------------------------------------------- LLM 마을 (P4, 진짜 LLM 없이)
+
+import sqlite3
+from types import SimpleNamespace
+
+
+from openai import APIConnectionError
+
+from pondvillage import llm
+from pondvillage.agents.llm_agent import build_llm_agents
+from pondvillage.logger import RunLogger, open_db
+from pondvillage.runner import assign_models, village_condition, village_label
+
+
+class FakeOllama:
+    """openai 클라이언트 흉내. 답 목록을 돌려 쓰고, 모델 목록을 알려 준다."""
+
+    def __init__(self, answers, models=("qwen2.5:7b", "gemma3:4b")):
+        self.answers = list(answers)
+        self.i = 0
+        self.asked_models = []
+        self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
+        self.models = SimpleNamespace(list=lambda: [SimpleNamespace(id=m) for m in models])
+
+    def _create(self, **kw):
+        self.asked_models.append(kw["model"])
+        answer = self.answers[self.i % len(self.answers)]
+        self.i += 1
+        if isinstance(answer, Exception):
+            raise answer
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=answer))],
+            usage=SimpleNamespace(prompt_tokens=300, completion_tokens=20),
+        )
+
+
+FISH10 = '{"action": "fish", "amount": 10, "reason": "나눠 쓰자"}'
+
+
+def llm_config():
+    raw = copy.deepcopy(RAW)
+    raw["llm"] = {"base_url": "http://localhost:11434/v1", "model": "qwen2.5:7b", "cost_cap_usd": 1.0}
+    return config_from_dict(raw)
+
+
+def test_assign_models_alternates_override():
+    config = llm_config()
+    assert list(assign_models(config, ["q", "g"]).values()) == ["q", "g", "q", "g", "q"]
+    assert set(assign_models(config).values()) == {"qwen2.5:7b"}
+
+
+def test_village_label_and_condition():
+    same = {i: "qwen2.5:7b" for i in IDS}
+    mixed = dict(zip(IDS, ["q", "g", "q", "g", "q"]))
+    assert (village_label(same), village_condition(same)) == ("qwen2.5:7b", "llm-same")
+    assert (village_label(mixed), village_condition(mixed)) == ("3q+2g", "llm-mixed")
+
+
+def _llm_run(tmp_path, answers, models, days=5, cap=1.0):
+    config = llm_config()
+    world = World.from_config(config)
+    conn = open_db(tmp_path / "llm.db")
+    logger = RunLogger.start(conn, "r", config_name="t", condition="llm", seed=1, model=village_label(models))
+    client = FakeOllama(answers)
+    caller = llm.LLMCaller(client=client, meter=llm.CostMeter(cap), record=logger.log_llm_call)
+    agents = build_llm_agents(config, caller, models)
+    return conn, client, lambda: run(world, agents, seed=1, days=days, logger=logger)
+
+
+def test_mixed_llm_village_runs_five_days_and_logs_calls(tmp_path):
+    models = dict(zip(IDS, ["qwen2.5:7b", "gemma3:4b"] * 3))
+    conn, client, go = _llm_run(tmp_path, [FISH10], models)
+    result = go()
+    assert result.end_reason == END_DAYS and len(result.days) == 5
+    assert all(d.total_catch == 50 for d in result.days)
+    assert client.asked_models[:5] == list(models.values())
+    calls = conn.execute("SELECT COUNT(*), SUM(parse_error IS NULL), SUM(cost_usd) FROM llm_calls").fetchone()
+    assert calls == (25, 25, 0.0)
+    conn.close()
+
+
+def test_bad_answers_do_nothing_and_never_crash(tmp_path):
+    models = {i: "qwen2.5:7b" for i in IDS}
+    conn, _, go = _llm_run(tmp_path, ["몰라요"], models, days=2)
+    result = go()
+    assert len(result.days) == 2
+    assert all(d.total_catch == 0 for d in result.days)
+    errors = conn.execute("SELECT COUNT(*) FROM actions WHERE parse_error LIKE '두 번 모두%'").fetchone()
+    assert errors == (10,)
+    assert conn.execute("SELECT COUNT(*) FROM llm_calls WHERE parse_error IS NOT NULL").fetchone() == (20,)
+    assert conn.execute("SELECT status FROM runs").fetchone() == ("days",)
+    conn.close()
+
+
+def test_server_dying_mid_run_stops_cleanly_with_error_status(tmp_path):
+    down = APIConnectionError(request=None)
+    models = {i: "qwen2.5:7b" for i in IDS}
+    conn, _, go = _llm_run(tmp_path, [FISH10] * 5 + [down] * 2, models)
+    with pytest.raises(llm.LLMUnavailable):
+        go()
+    assert conn.execute("SELECT status FROM runs").fetchone() == ("error",)
+    assert conn.execute("SELECT COUNT(*) FROM days").fetchone() == (1,)
+    conn.close()
+
+
+def test_cost_cap_aborts_run(tmp_path, monkeypatch):
+    monkeypatch.setattr(llm, "estimate_cost", lambda *a: 0.3)
+    models = {i: "qwen2.5:7b" for i in IDS}
+    conn, _, go = _llm_run(tmp_path, [FISH10], models, cap=1.0)
+    with pytest.raises(llm.CostCapExceeded):
+        go()
+    assert conn.execute("SELECT status FROM runs").fetchone() == ("aborted_cost",)
+    # 상한을 넘긴 4번째 호출까지 기록된다
+    assert conn.execute("SELECT COUNT(*) FROM llm_calls").fetchone() == (4,)
+    conn.close()
+
+
+def test_main_llm_stops_early_when_ollama_is_down(tmp_path, monkeypatch, capsys):
+    def down(*a, **kw):
+        raise llm.LLMUnavailable("WSL을 깨워 주세요")
+
+    monkeypatch.setattr(llm, "check_ollama", down)
+    code = main(["--config", str(BASE_YAML), "--llm", "--days", "1", "--runs-dir", str(tmp_path)])
+    assert code == 1
+    assert "WSL" in capsys.readouterr().out
+    assert list(tmp_path.iterdir()) == []  # 기록 파일도 만들지 않는다
+
+
+def test_main_llm_mixed_village_end_to_end(tmp_path, monkeypatch, capsys):
+    fake = FakeOllama([FISH10])
+    monkeypatch.setattr(llm, "make_client", lambda *a, **kw: fake)
+    code = main([
+        "--config", str(BASE_YAML), "--llm", "--days", "2", "--models", "qwen2.5:7b,gemma3:4b",
+        "--runs-dir", str(tmp_path),
+    ])
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "3qwen2.5:7b+2gemma3:4b" in out and "LLM 호출 10번" in out
+    (db,) = tmp_path.glob("*_llm-mixed_s1.db")
+    conn = sqlite3.connect(db)
+    assert conn.execute("SELECT condition, model, status FROM runs").fetchone() == (
+        "llm-mixed", "3qwen2.5:7b+2gemma3:4b", "days",
+    )
+    models = [m for (m,) in conn.execute("SELECT model FROM llm_calls WHERE day = 1 ORDER BY rowid")]
+    assert models == ["qwen2.5:7b", "gemma3:4b", "qwen2.5:7b", "gemma3:4b", "qwen2.5:7b"]
+    conn.close()

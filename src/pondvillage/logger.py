@@ -1,8 +1,9 @@
 """SQLite 기록.
 
 실행 결과를 `runs/*.db` 파일 하나(SQLite)에 남긴다. 표 모양은 SPEC 7장 그대로다.
-- 이번에 채우는 표: runs(실행 소개), days(날마다 연못), agent_days(날마다 어부), actions(어부가 고른 행동)
-- 빈 표만 만들어 두는 것: messages(P6 대화), votes(3단계 투표), llm_calls(P4 LLM 호출)
+- 채우는 표: runs(실행 소개), days(날마다 연못), agent_days(날마다 어부), actions(어부가 고른 행동),
+  llm_calls(LLM 호출 한 번마다: 보낸 질문·받은 답·토큰·시간·비용·해석 실패)
+- 빈 표만 만들어 두는 것: messages(P6 대화), votes(3단계 투표)
 
 기록원은 판정하지 않는다. 러너가 넘겨준 하루 결과(`DayResult`)를 표 칸에 옮겨 적기만 한다.
 하루가 끝날 때마다 저장을 확정(commit)하므로, 중간에 멈춰도 그날까지는 남는다.
@@ -23,11 +24,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:  # runner가 logger를 부르므로, 서로 부르는 고리를 피한다
+    from pondvillage.llm import CallRecord
     from pondvillage.runner import DayResult
     from pondvillage.world import World
 
 STATUS_RUNNING = "running"  # 진행 중. 끝나면 끝난 이유(collapsed / days / all_left)로 바뀐다
-STATUS_ERROR = "error"  # 중간에 오류로 멈춤
+STATUS_ERROR = "error"  # 중간에 오류로 멈춤 (LLM 서버에 닿지 않을 때 포함)
+STATUS_ABORTED_COST = "aborted_cost"  # 비용 상한을 넘어 멈춤 (SPEC 8장)
 
 PHASE_FISH = "fish"  # 어획 페이즈 첫 답
 PHASE_FISH_AFTER_INSPECT = "fish_after_inspect"  # 연못을 확인한 뒤 다시 고른 답
@@ -98,7 +101,10 @@ CREATE TABLE IF NOT EXISTS llm_calls (
     prompt_tokens INTEGER,
     completion_tokens INTEGER,
     latency_ms INTEGER,
-    cost_usd REAL
+    cost_usd REAL,
+    prompt TEXT,
+    response TEXT,
+    parse_error TEXT
 );
 """
 
@@ -190,6 +196,17 @@ class RunLogger:
                     ),
                 )
         self.conn.commit()
+
+    def log_llm_call(self, rec: CallRecord) -> None:
+        """LLM 호출 한 번을 llm_calls에 적는다. 저장 확정은 그날 저녁(log_day)이나 finish에서."""
+        self.conn.execute(
+            "INSERT INTO llm_calls (run_id, day, agent_id, phase, model, prompt_tokens, completion_tokens,"
+            " latency_ms, cost_usd, prompt, response, parse_error) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                self.run_id, rec.day, rec.agent_id, rec.phase, rec.model, rec.prompt_tokens,
+                rec.completion_tokens, rec.latency_ms, rec.cost_usd, rec.prompt, rec.response, rec.parse_error,
+            ),
+        )
 
     def finish(self, status: str) -> None:
         """끝난 이유(또는 error)를 runs.status에 적는다."""

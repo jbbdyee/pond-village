@@ -39,6 +39,7 @@ SPEC_COLUMNS = {
     "llm_calls": [
         "run_id", "day", "agent_id", "phase", "model",
         "prompt_tokens", "completion_tokens", "latency_ms", "cost_usd",
+        "prompt", "response", "parse_error",
     ],
 }
 
@@ -257,3 +258,22 @@ def test_cli_baseline_saves_one_file(tmp_path, capsys):
 
 def test_viewer_missing_file(tmp_path, capsys):
     assert lg.main([str(tmp_path / "없음.db")]) == 1
+
+
+# ---------------------------------------------------------------- LLM 호출 기록 (P4)
+
+
+def test_llm_call_is_saved_with_prompt_response_and_parse_error(conn):
+    from pondvillage.llm import CallRecord
+
+    logger = start(conn)
+    logger.log_llm_call(CallRecord(
+        day=2, agent_id="a1", phase="fish", model="qwen2.5:7b", prompt='[{"role": "user"}]',
+        response="물고기", prompt_tokens=100, completion_tokens=5, latency_ms=800, cost_usd=0.0,
+        parse_error="JSON 아님",
+    ))
+    logger.finish(lg.STATUS_ABORTED_COST)
+    assert rows(conn, "SELECT day, agent_id, phase, model, response, parse_error, cost_usd FROM llm_calls") == [
+        (2, "a1", "fish", "qwen2.5:7b", "물고기", "JSON 아님", 0.0)
+    ]
+    assert rows(conn, "SELECT status FROM runs") == [("aborted_cost",)]

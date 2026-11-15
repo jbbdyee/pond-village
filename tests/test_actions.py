@@ -110,3 +110,10 @@ def test_bad_answer_becomes_do_nothing_with_parse_error(raw):
 def test_non_string_reason_is_kept_as_text():
     d = validate_fish_action({"action": "fish", "amount": 3, "reason": 42}, cap=20)
     assert d.reason == "42"
+
+
+def test_llm_parse_error_marker_becomes_do_nothing():
+    from pondvillage.actions import NONE, PARSE_ERROR_KEY
+
+    d = validate_fish_action({PARSE_ERROR_KEY: "JSON 아님"}, 20)
+    assert (d.kind, d.amount, d.parse_error) == (NONE, 0, "JSON 아님")

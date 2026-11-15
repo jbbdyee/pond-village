@@ -120,13 +120,13 @@ rumor:
 
 | 테이블 | 주요 컬럼 |
 |---|---|
-| `runs` | run_id, config_name, condition, seed, model, started_at, status (`model`: 같은 모델 마을이면 모델 이름, 섞이면 구성 이름 예: `mixed`, `4qwen+1gemma`) |
+| `runs` | run_id, config_name, condition, seed, model, started_at, status (`model`: 같은 모델 마을이면 모델 이름, 섞이면 구성 이름 예: `3qwen2.5:7b+2gemma3:4b`. `condition`: 봇 종류 또는 `llm-same`·`llm-mixed`) |
 | `days` | run_id, day, stock_start, stock_end, total_catch, collapsed |
 | `agent_days` | run_id, day, agent_id, money, alive, catch, violated, beliefs_json, trust_json |
 | `messages` | run_id, day, from, to, text, is_rumor |
 | `actions` | run_id, day, phase, agent_id, action_json, reason, parse_error, clamped |
 | `votes` | run_id, day, proposal_id, agent_id, vote |
-| `llm_calls` | run_id, day, agent_id, phase, model, prompt_tokens, completion_tokens, latency_ms, cost_usd |
+| `llm_calls` | run_id, day, agent_id, phase, model, prompt_tokens, completion_tokens, latency_ms, cost_usd, prompt, response, parse_error (호출 한 번마다 한 줄. 해석에 실패해 다시 물은 호출도 따로 남는다. 2026-11-15 prompt·response·parse_error 추가) |
 
 ## 8. 종료 조건
 - 설정한 일수 도달 (기본 30일)

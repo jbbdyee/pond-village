@@ -10,6 +10,9 @@
 실행 예:
     uv run python -m pondvillage.runner --config configs/base.yaml --days 5 --bot greedy
     → 결과가 runs/<시각>_greedy_s1.db에 저장된다 (--no-log면 저장 안 함)
+    uv run python -m pondvillage.runner --llm --days 5                               # qwen2.5:7b × 5
+    uv run python -m pondvillage.runner --llm --days 5 --models qwen2.5:7b,gemma3:4b # 섞인 마을
+    → runs/<시각>_llm-same_s1.db / runs/<시각>_llm-mixed_s1.db (LLM 호출은 llm_calls 표에)
 """
 
 from __future__ import annotations
@@ -20,11 +23,17 @@ import sqlite3
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
-from pondvillage import rules
-from pondvillage.actions import INSPECT, FishDecision, catch_cap, validate_fish_action
+from collections import Counter
+from collections.abc import Callable
+
+from pondvillage import llm, rules
+from pondvillage.actions import INSPECT, NONE, FishDecision, catch_cap, validate_fish_action
 from pondvillage.agents.base import BaseAgent, Observation
+from pondvillage.agents.llm_agent import build_llm_agents
 from pondvillage.agents.scripted import CooperativeBot, GreedyBot, RandomBot
-from pondvillage.logger import STATUS_ERROR, RunLogger, make_run_id, make_stamp, open_db
+from pondvillage.logger import (
+    STATUS_ABORTED_COST, STATUS_ERROR, RunLogger, make_run_id, make_stamp, open_db,
+)
 from pondvillage.world import Config, World, load_config
 
 # 끝난 이유
@@ -167,15 +176,20 @@ def run(
     seed: int,
     days: int | None = None,
     logger: RunLogger | None = None,
+    on_day: Callable[[DayResult], None] | None = None,
 ) -> RunResult:
-    """끝날 때까지 하루씩 돌린다. SPEC 8장 종료 조건: 일수 도달, 연못 붕괴, 모두 떠남.
+    """끝날 때까지 하루씩 돌린다. SPEC 8장 종료 조건: 일수 도달, 연못 붕괴, 모두 떠남, 비용 상한.
 
     logger를 주면 매일 저녁 하루 결과를 기록하고, 끝나면 끝난 이유를 runs.status에 적는다.
-    중간에 오류가 나면 status를 error로 적고 오류는 그대로 올려 보낸다.
-    (비용 상한은 LLM 어부가 생기는 P4에서 붙인다.)
+    비용 상한을 넘으면 status를 aborted_cost로, 그 밖의 오류(LLM 서버 꺼짐 등)는 error로 적고
+    오류는 그대로 올려 보낸다. on_day: 하루가 끝날 때마다 부를 함수 (콘솔 진행 표시용).
     """
     try:
-        result = _run_days(world, agents, seed, days, logger)
+        result = _run_days(world, agents, seed, days, logger, on_day)
+    except llm.CostCapExceeded:
+        if logger is not None:
+            logger.finish(STATUS_ABORTED_COST)
+        raise
     except Exception:
         if logger is not None:
             logger.finish(STATUS_ERROR)
@@ -186,7 +200,12 @@ def run(
 
 
 def _run_days(
-    world: World, agents: dict[str, BaseAgent], seed: int, days: int | None, logger: RunLogger | None
+    world: World,
+    agents: dict[str, BaseAgent],
+    seed: int,
+    days: int | None,
+    logger: RunLogger | None,
+    on_day: Callable[[DayResult], None] | None = None,
 ) -> RunResult:
     days = world.config.days if days is None else days
     estimate_rng = make_rng(seed, "estimate")
@@ -197,6 +216,8 @@ def _run_days(
         results.append(result)
         if logger is not None:
             logger.log_day(result, world)
+        if on_day is not None:
+            on_day(result)
         if result.collapsed:
             return RunResult(results, END_COLLAPSED)
         if not world.alive_agents():
@@ -342,6 +363,126 @@ def format_baseline(rows: list[RunSummary]) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------- LLM 마을 (모델 마을, EXPERIMENT 1단계)
+
+
+def assign_models(config: Config, override: list[str] | None = None) -> dict[str, str]:
+    """어부 id → 모델. override가 있으면 어부 순서대로 번갈아 준다 (예: q, g → q g q g q).
+
+    없으면 설정의 어부별 model, 그것도 없으면 기본 모델. 정식 마을 구성 파일은 P8(exp1_*.yaml).
+    """
+    if override:
+        return {spec.id: override[i % len(override)] for i, spec in enumerate(config.agents)}
+    return {spec.id: config.model_for(spec) for spec in config.agents}
+
+
+def village_label(models: dict[str, str]) -> str:
+    """runs.model에 적을 마을 구성 이름. 같은 모델이면 그 이름, 섞이면 예: 3qwen2.5:7b+2gemma3:4b."""
+    counts = Counter(models.values())
+    if len(counts) == 1:
+        return next(iter(counts))
+    return "+".join(f"{n}{m}" for m, n in counts.items())
+
+
+def village_condition(models: dict[str, str]) -> str:
+    return "llm-same" if len(set(models.values())) == 1 else "llm-mixed"
+
+
+def format_requests(world: World, result: RunResult) -> str:
+    """날짜별 어부 답: 요청 마릿수, 연못을 확인했으면 "확인→n", 해석 실패면 "실패"."""
+    header = ["날"] + [f"{a.name}({a.model})" if a.model else a.name for a in world.agents]
+    rows = [header]
+    for d in result.days:
+        by_id = {t.agent_id: t for t in d.turns}
+        cells = []
+        for a in world.agents:
+            t = by_id.get(a.id)
+            if t is None:
+                cells.append("-")
+            elif t.decision.parse_error:
+                cells.append("실패")
+            elif t.inspected:
+                cells.append(f"확인→{t.decision.amount}" if t.decision.kind != NONE else "확인→0")
+            else:
+                cells.append(str(t.decision.amount) + ("*" if t.decision.clamped else ""))
+        rows.append([str(d.day)] + cells)
+    widths = [max(len(r[i]) for r in rows) + 2 for i in range(len(header))]
+    lines = ["".join(cell.rjust(w) for cell, w in zip(r, widths)) for r in rows]
+    lines.append("(*: 20마리 상한으로 잘림)")
+    return "\n".join(lines)
+
+
+def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp: str, runs_dir: Path) -> int:
+    if config.llm is None:
+        print("설정 파일에 llm 항목이 없습니다.")
+        return 1
+    override = [m.strip() for m in args.models.split(",") if m.strip()] if args.models else None
+    models = assign_models(config, override)
+    base_url = config.llm.base_url
+
+    # 출발 전 점검: 꺼진 서버에 120초씩 기다리지 않게 (WSL이 쉬면 Ollama도 꺼진다)
+    try:
+        llm.check_ollama(base_url, list(models.values()))
+    except (llm.LLMUnavailable, llm.PaidCallNotAllowed) as e:
+        print(f"[시작 못 함] {e}")
+        return 1
+
+    seed = config.seed if args.seed is None else args.seed
+    world = World.from_config(config)
+    for agent in world.agents:
+        agent.model = models[agent.id]
+    condition = village_condition(models)
+    run_id = make_run_id(stamp, condition, seed)
+    db_path = runs_dir / f"{run_id}.db"
+    conn = None if args.no_log else open_db(db_path)
+
+    calls: list[llm.CallRecord] = []
+    logger = None
+    if conn is not None:
+        logger = RunLogger.start(
+            conn, run_id, config_name=config_name, condition=condition, seed=seed, model=village_label(models)
+        )
+
+    def record(rec: llm.CallRecord) -> None:
+        calls.append(rec)
+        if logger is not None:
+            logger.log_llm_call(rec)
+
+    caller = llm.LLMCaller(
+        base_url, config.llm.temperature, meter=llm.CostMeter(config.llm.cost_cap_usd), record=record
+    )
+    agents = build_llm_agents(config, caller, models)
+    print(f"LLM 마을: {village_label(models)} · 시드 {seed} · 성격 문구 {'켬' if config.llm.persona_enabled else '끔'}")
+
+    def progress(d: DayResult) -> None:
+        print(f"  {d.day}일째 끝: 총어획 {d.total_catch}, 저녁 재고 {d.stock_end}{' (붕괴)' if d.collapsed else ''}",
+              flush=True)
+
+    try:
+        result = run(world, agents, seed, days=args.days, logger=logger, on_day=progress)
+    except (llm.LLMUnavailable, llm.CostCapExceeded) as e:
+        print(f"[멈춤] {e}")
+        if conn is not None:
+            print(f"그때까지의 기록: {db_path}")
+        return 1
+    finally:
+        if conn is not None:
+            conn.close()
+
+    print(format_table(world, result))
+    print("\n어부 답 (요청 마릿수)")
+    print(format_requests(world, result))
+    failed = sum(1 for c in calls if c.parse_error)
+    avg_ms = sum(c.latency_ms for c in calls) / len(calls) if calls else 0
+    print(
+        f"\nLLM 호출 {len(calls)}번 · 해석 실패 {failed}번 · 평균 {avg_ms / 1000:.1f}초"
+        f" · 비용 {sum(c.cost_usd for c in calls):.4f} USD"
+    )
+    if conn is not None:
+        print(f"저장: {db_path}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="봇 마을을 돌려 날짜별 표를 찍는다 (LLM 없음, 비용 0원).")
     parser.add_argument("--config", default="configs/base.yaml")
@@ -352,12 +493,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--seeds", type=int, default=10, help="--baseline에서 돌릴 시드 수 (기본 10)")
     parser.add_argument("--runs-dir", default="runs", help="DB 파일을 둘 폴더 (기본 runs)")
     parser.add_argument("--no-log", action="store_true", help="DB 파일에 저장하지 않는다")
+    parser.add_argument("--llm", action="store_true", help="봇 대신 LLM 어부 (로컬 Ollama)")
+    parser.add_argument(
+        "--models", default=None,
+        help="--llm에서 어부에게 번갈아 줄 모델, 쉼표로 (예: qwen2.5:7b,gemma3:4b). 없으면 설정 값",
+    )
     args = parser.parse_args(argv)
 
     config = load_config(args.config)
     config_name = Path(args.config).stem
     stamp = make_stamp()
     runs_dir = Path(args.runs_dir)
+
+    if args.llm:
+        return _main_llm(args, config, config_name, stamp, runs_dir)
 
     if args.baseline:
         db_path = runs_dir / f"{stamp}_baseline.db"

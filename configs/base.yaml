@@ -24,6 +24,10 @@ llm:
   base_url: "http://localhost:11434/v1"   # Ollama 로컬
   model: "qwen2.5:7b"                     # 개발용 (2026-11-15 3개 비교 후 결정, NOTES 참고)
   temperature: 0.7
+  persona_enabled: false                  # false: 이름만 준다 (1단계 모델 마을). true면 아래 persona도 넣는다
+  cost_cap_usd: 1.0                       # 실행 1회 비용 상한, USD (로컬 모델은 0원이라 닿지 않음)
+
+# 어부마다 model: "..."을 적으면 그 모델로 부른다. 비우면 위 llm.model.
 
 # 페르소나는 실험 내내 고정한다 (조건 간 비교용).
 # 동기와 성격만 적고, 행동이나 "몇 마리" 같은 숫자는 적지 않는다.

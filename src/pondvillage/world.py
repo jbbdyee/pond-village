@@ -48,6 +48,18 @@ class AgentSpec:
     id: str
     name: str
     persona: str
+    model: str | None = None  # 이 어부를 움직이는 LLM. 비우면 llm.model (SPEC 2장)
+
+
+@dataclass(frozen=True)
+class LLMConfig:
+    """LLM 설정. 숫자 규칙이 아니라 "누구에게 어떻게 묻는지"라서 SPEC 규칙과는 별개다."""
+
+    base_url: str
+    model: str  # 기본 모델 (어부 칸에 model이 없으면 이것)
+    temperature: float = 0.7
+    persona_enabled: bool = False  # False면 이름만 준다 (1단계 모델 마을, SPEC 2장)
+    cost_cap_usd: float | None = None  # 실행 1회 비용 상한. 넘으면 즉시 멈춘다
 
 
 @dataclass(frozen=True)
@@ -59,6 +71,13 @@ class Config:
     agents: tuple[AgentSpec, ...]
     days: int
     seed: int
+    llm: LLMConfig | None = None  # 봇만 돌릴 때는 없어도 된다
+
+    def model_for(self, agent: AgentSpec) -> str:
+        """이 어부를 움직일 모델: 어부 칸의 model, 없으면 기본 모델."""
+        if self.llm is None:
+            raise ConfigError("설정 파일에 llm 항목이 없습니다")
+        return agent.model or self.llm.model
 
 
 class ConfigError(ValueError):
@@ -83,6 +102,7 @@ def config_from_dict(raw: dict) -> Config:
             agents=tuple(AgentSpec(**a) for a in raw["agents"]),
             days=raw["run"]["days"],
             seed=raw["run"]["seed"],
+            llm=LLMConfig(**raw["llm"]) if raw.get("llm") else None,
         )
     except (KeyError, TypeError) as e:
         raise ConfigError(f"설정 파일 항목이 빠졌거나 이름이 틀렸습니다: {e}") from e
@@ -139,6 +159,7 @@ class Agent:
     memory: list[MemoryItem] = field(default_factory=list)
     beliefs: Beliefs | None = None  # 첫 일기를 쓰기 전에는 없다
     trust: dict[str, float] = field(default_factory=dict)  # 다른 어부 id -> 0~1
+    model: str | None = None  # 이 어부를 움직이는 LLM (봇 마을이면 설정에 llm이 없을 때 None)
 
 
 @dataclass
@@ -155,7 +176,10 @@ class World:
         """설정대로 1일차 아침의 마을을 만든다."""
         pond = Pond(capacity=config.pond.capacity, stock=config.pond.initial_stock)
         agents = [
-            Agent(id=a.id, name=a.name, persona=a.persona, money=config.economy.start_money)
+            Agent(
+                id=a.id, name=a.name, persona=a.persona, money=config.economy.start_money,
+                model=config.model_for(a) if config.llm else a.model,
+            )
             for a in config.agents
         ]
         return cls(config=config, pond=pond, agents=agents)

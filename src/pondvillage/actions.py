@@ -18,6 +18,10 @@ FISH = "fish"
 INSPECT = "inspect_pond"
 NONE = "none"  # 아무것도 안 함 (해석 실패, 또는 확인을 두 번 고른 경우)
 
+# LLM 답을 JSON으로 읽지 못했을 때 어부가 돌려주는 dict의 열쇠. 값은 실패 이유.
+# 이 열쇠가 있으면 모양 검사 없이 "아무것도 안 함" + 그 이유를 parse_error로 남긴다.
+PARSE_ERROR_KEY = "_parse_error"
+
 
 @dataclass(frozen=True)
 class FishDecision:
@@ -61,6 +65,8 @@ def validate_fish_action(raw: object, cap: int, allow_inspect: bool = True) -> F
     """
     if not isinstance(raw, dict):
         return FishDecision(NONE, 0, "", parse_error=f"dict가 아님: {type(raw).__name__}")
+    if raw.get(PARSE_ERROR_KEY):
+        return FishDecision(NONE, 0, "", parse_error=str(raw[PARSE_ERROR_KEY]))
 
     reason = raw.get("reason", "")
     reason = reason if isinstance(reason, str) else str(reason)

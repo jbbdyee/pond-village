@@ -120,3 +120,32 @@ def test_duplicate_agent_id_raises_config_error():
 
     with pytest.raises(ConfigError):
         config_from_dict(raw)
+
+
+# ---------------------------------------------------------------- 어부별 모델 (P4)
+
+
+def test_base_yaml_llm_defaults():
+    config = load_config(BASE_YAML)
+    assert config.llm.model == "qwen2.5:7b"
+    assert config.llm.persona_enabled is False
+    assert config.llm.temperature == 0.7
+    assert config.llm.cost_cap_usd is not None
+
+
+def test_fisher_model_falls_back_to_default():
+    raw = copy.deepcopy(RAW)
+    raw["llm"] = {"base_url": "http://localhost:11434/v1", "model": "qwen2.5:7b"}
+    raw["agents"][1]["model"] = "gemma3:4b"
+    config = config_from_dict(raw)
+    assert [config.model_for(a) for a in config.agents] == ["qwen2.5:7b", "gemma3:4b"]
+    assert config.llm.persona_enabled is False  # 적지 않으면 끔
+    world = World.from_config(config)
+    assert [a.model for a in world.agents] == ["qwen2.5:7b", "gemma3:4b"]
+
+
+def test_bot_config_without_llm_still_loads():
+    config = config_from_dict(RAW)
+    assert config.llm is None
+    with pytest.raises(ConfigError):
+        config.model_for(config.agents[0])
