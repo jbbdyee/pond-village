@@ -4,6 +4,8 @@
 - 어부마다 `model`이 다르다 (모델 마을, EXPERIMENT 1단계). 창구(`LLMCaller`)는 마을이 함께 쓴다.
 - 질문지 문구는 `prompts/`의 글 파일에 있다. 숫자는 설정에서 채운다 (SPEC과 어긋나지 않게).
 - persona_enabled가 False면 이름만 준다. 성격 문구가 섞이면 차이가 모델 탓인지 가릴 수 없어서다.
+- 기억(P5): 아침 질문지에 "최근 2일 기록 + 지금까지의 요약 + 지난 일기의 내 생각"을 붙인다(memory.py).
+  저녁에는 일기(write_diary)를 쓴다. 일기 답 검사·반영은 러너가 memory.validate_diary로 한다.
 - 넣지 않는 것: 지속 가능한 양(스스로 알아내는지가 관찰 대상), 전체 일수(끝을 알면 몰아 잡기 쉬움),
   다른 어부의 모델 이름.
 
@@ -17,9 +19,10 @@ from functools import cache
 from pathlib import Path
 
 from pondvillage.actions import PARSE_ERROR_KEY
-from pondvillage.agents.base import BaseAgent, Observation
+from pondvillage.agents.base import BaseAgent, DiaryContext, Observation
 from pondvillage.llm import LLMCaller
-from pondvillage.logger import PHASE_FISH, PHASE_FISH_AFTER_INSPECT
+from pondvillage.logger import PHASE_DIARY, PHASE_FISH, PHASE_FISH_AFTER_INSPECT
+from pondvillage.memory import SUMMARY_MAX_CHARS
 from pondvillage.world import Config
 
 PROMPTS_DIR = Path(__file__).resolve().parent.parent / "prompts"
@@ -30,10 +33,10 @@ def load_prompt(name: str) -> str:
     return (PROMPTS_DIR / f"{name}.txt").read_text(encoding="utf-8")
 
 
-def fish_system_prompt(config: Config) -> str:
-    """규칙 설명. 숫자는 전부 설정 파일에서 온다."""
+def rules_text(config: Config) -> str:
+    """마을 규칙 설명 (어획·일기 질문지가 같이 쓴다). 숫자는 전부 설정 파일에서 온다."""
     pond, eco = config.pond, config.economy
-    return load_prompt("fish_system").format(
+    return load_prompt("village_rules").rstrip().format(
         n_agents=len(config.agents),
         capacity=pond.capacity,
         regen=pond.regen_multiplier,
@@ -43,6 +46,28 @@ def fish_system_prompt(config: Config) -> str:
         bankrupt=eco.bankrupt_after_days,
         cap=eco.max_catch_per_day,
         inspect_cap=math.floor(eco.max_catch_per_day * eco.inspect_catch_factor),
+    )
+
+
+def fish_system_prompt(config: Config) -> str:
+    """어획 질문지의 규칙 설명 + 답 모양."""
+    return load_prompt("fish_system").format(rules=rules_text(config), cap=config.economy.max_catch_per_day)
+
+
+def diary_system_prompt(config: Config) -> str:
+    """일기 질문지의 규칙 설명 + 일기 JSON 모양."""
+    return load_prompt("diary_system").format(rules=rules_text(config), summary_max=SUMMARY_MAX_CHARS)
+
+
+def diary_user_prompt(name: str, persona: str | None, ctx: DiaryContext) -> str:
+    return load_prompt("diary_user").format(
+        name=name,
+        persona_line=f" {persona}" if persona else "",
+        day=ctx.day,
+        memory_block=ctx.memory,
+        money=ctx.money,
+        neighbors=", ".join(ctx.neighbors) if ctx.neighbors else "없음",
+        summary_max=SUMMARY_MAX_CHARS,
     )
 
 
@@ -61,6 +86,7 @@ def fish_user_prompt(name: str, persona: str | None, obs: Observation, inspect_c
     return load_prompt("fish_user").format(
         name=name,
         persona_line=f" {persona}" if persona else "",
+        memory_block=obs.memory,
         day=obs.day,
         estimate=obs.stock_estimate,
         yesterday_line=yesterday,
@@ -87,6 +113,7 @@ class LLMAgent(BaseAgent):
         self.caller = caller
         self.persona = persona  # None이면 이름만 (persona_enabled: false)
         self.system = fish_system_prompt(config)
+        self.diary_system = diary_system_prompt(config)
         eco = config.economy
         self.inspect_cap = math.floor(eco.max_catch_per_day * eco.inspect_catch_factor)
 
@@ -100,6 +127,20 @@ class LLMAgent(BaseAgent):
         phase = PHASE_FISH if obs.exact_stock is None else PHASE_FISH_AFTER_INSPECT
         reply = self.caller.ask_json(
             self.messages_for(obs), model=self.model, day=obs.day, agent_id=self.agent_id, phase=phase
+        )
+        if reply.data is None:
+            return {PARSE_ERROR_KEY: reply.parse_error}
+        return reply.data
+
+    def diary_messages_for(self, ctx: DiaryContext) -> list[dict[str, str]]:
+        return [
+            {"role": "system", "content": self.diary_system},
+            {"role": "user", "content": diary_user_prompt(self.name, self.persona, ctx)},
+        ]
+
+    def write_diary(self, ctx: DiaryContext) -> dict:
+        reply = self.caller.ask_json(
+            self.diary_messages_for(ctx), model=self.model, day=ctx.day, agent_id=self.agent_id, phase=PHASE_DIARY
         )
         if reply.data is None:
             return {PARSE_ERROR_KEY: reply.parse_error}

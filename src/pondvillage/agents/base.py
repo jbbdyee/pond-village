@@ -29,6 +29,19 @@ class Observation:
     # 연못을 확인(inspect_pond)한 어부에게 다시 물을 때만 채운다. 평소에는 None.
     # 이때 어획 상한은 절반이다 (검사는 actions.py).
     exact_stock: int | None = None
+    # 질문지에 붙일 기억 글 (memory.memory_text). 봇은 쓰지 않는다. 1일째 아침에는 빈 글.
+    memory: str = ""
+
+
+@dataclass(frozen=True)
+class DiaryContext:
+    """저녁 일기를 쓸 때 어부가 아는 것: 정산 뒤 내 돈, 오늘까지의 기억, 남은 이웃 이름."""
+
+    day: int
+    agent_id: str
+    money: int
+    memory: str
+    neighbors: tuple[str, ...]
 
 
 def fish_action(amount: int, reason: str) -> dict:
@@ -45,3 +58,7 @@ class BaseAgent(ABC):
     @abstractmethod
     def decide_fish(self, obs: Observation) -> dict:
         """어획 페이즈 행동을 SPEC 4장 모양의 dict로 돌려준다."""
+
+    def write_diary(self, ctx: DiaryContext) -> dict | None:
+        """저녁 일기 (SPEC 4장 일기 JSON). 봇은 일기를 쓰지 않으므로 기본은 None."""
+        return None

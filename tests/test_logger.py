@@ -277,3 +277,45 @@ def test_llm_call_is_saved_with_prompt_response_and_parse_error(conn):
         (2, "a1", "fish", "qwen2.5:7b", "물고기", "JSON 아님", 0.0)
     ]
     assert rows(conn, "SELECT status FROM runs") == [("aborted_cost",)]
+
+
+# ---------------------------------------------------------------- 질문지 길이 표 (P5)
+
+
+def _call(day, phase, tokens, retry=False):
+    from pondvillage.llm import CallRecord
+
+    msgs = [{"role": "system", "content": "s"}, {"role": "user", "content": "u"}]
+    if retry:
+        msgs += [{"role": "assistant", "content": "x"}, {"role": "user", "content": "다시"}]
+    return CallRecord(
+        day=day, agent_id="a1", phase=phase, model="m", prompt=json.dumps(msgs, ensure_ascii=False),
+        response="{}", prompt_tokens=tokens, completion_tokens=1, latency_ms=1, cost_usd=0.0, parse_error=None,
+    )
+
+
+def test_token_rows_skip_retries_and_table_shows_avg_and_max(conn):
+    logger = start(conn)
+    for rec in [_call(1, "fish", 400), _call(1, "fish", 500), _call(1, "fish", 900, retry=True),
+                _call(1, "diary", 600), _call(2, "fish", 700)]:
+        logger.log_llm_call(rec)
+    logger.finish("days")
+    got = lg.token_rows(conn, "r1")
+    assert got == [(1, "fish", 400), (1, "fish", 500), (1, "diary", 600), (2, "fish", 700)]
+    table = lg.format_tokens(got)
+    assert "어획 평균" in table and "일기 최대" in table
+    day1, day2 = table.splitlines()[1:3]
+    assert day1.split() == ["1", "450", "500", "600", "600"]
+    assert day2.split() == ["2", "700", "700", "-", "-"]
+
+
+def test_cli_tokens_option(tmp_path, capsys):
+    db = tmp_path / "t.db"
+    c = lg.open_db(db)
+    logger = lg.RunLogger.start(c, "r1", config_name="t", condition="llm", seed=1, model="m")
+    logger.log_llm_call(_call(1, "fish", 455))
+    logger.finish("days")
+    c.close()
+    assert lg.main([str(db), "--tokens"]) == 0
+    out = capsys.readouterr().out
+    assert "질문지 길이" in out and "455" in out

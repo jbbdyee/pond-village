@@ -133,6 +133,7 @@ class MemoryItem:
 
     day: int
     text: str
+    kind: str = "event"  # "event": 코드가 적은 사실, "diary": 저녁 일기 요약 (memory.py)
 
 
 @dataclass

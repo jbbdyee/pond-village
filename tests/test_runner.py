@@ -313,8 +313,10 @@ from pondvillage.runner import assign_models, village_condition, village_label
 class FakeOllama:
     """openai 클라이언트 흉내. 답 목록을 돌려 쓰고, 모델 목록을 알려 준다."""
 
-    def __init__(self, answers, models=("qwen2.5:7b", "gemma3:4b")):
+    def __init__(self, answers, models=("qwen2.5:7b", "gemma3:4b"), diary=None):
         self.answers = list(answers)
+        self.diary = diary  # 주면 일기 질문에는 이 답을 준다. 없으면 일기에도 answers를 돌려 쓴다
+        self.prompt_chars = False  # True면 prompt_tokens 대신 보낸 글자 수를 돌려준다 (길이 확인용)
         self.i = 0
         self.asked_models = []
         self.chat = SimpleNamespace(completions=SimpleNamespace(create=self._create))
@@ -322,13 +324,20 @@ class FakeOllama:
 
     def _create(self, **kw):
         self.asked_models.append(kw["model"])
-        answer = self.answers[self.i % len(self.answers)]
-        self.i += 1
+        is_diary = "일기를 쓴다" in kw["messages"][0]["content"]
+        if is_diary and self.diary is not None:
+            answer = self.diary
+        else:
+            answer = self.answers[self.i % len(self.answers)]
+            self.i += 1
         if isinstance(answer, Exception):
             raise answer
         return SimpleNamespace(
             choices=[SimpleNamespace(message=SimpleNamespace(content=answer))],
-            usage=SimpleNamespace(prompt_tokens=300, completion_tokens=20),
+            usage=SimpleNamespace(
+                prompt_tokens=sum(len(m["content"]) for m in kw["messages"]) if self.prompt_chars else 300,
+                completion_tokens=20,
+            ),
         )
 
 
@@ -354,12 +363,12 @@ def test_village_label_and_condition():
     assert (village_label(mixed), village_condition(mixed)) == ("3q+2g", "llm-mixed")
 
 
-def _llm_run(tmp_path, answers, models, days=5, cap=1.0):
+def _llm_run(tmp_path, answers, models, days=5, cap=1.0, diary=None):
     config = llm_config()
     world = World.from_config(config)
     conn = open_db(tmp_path / "llm.db")
     logger = RunLogger.start(conn, "r", config_name="t", condition="llm", seed=1, model=village_label(models))
-    client = FakeOllama(answers)
+    client = FakeOllama(answers, diary=diary)
     caller = llm.LLMCaller(client=client, meter=llm.CostMeter(cap), record=logger.log_llm_call)
     agents = build_llm_agents(config, caller, models)
     return conn, client, lambda: run(world, agents, seed=1, days=days, logger=logger)
@@ -373,7 +382,7 @@ def test_mixed_llm_village_runs_five_days_and_logs_calls(tmp_path):
     assert all(d.total_catch == 50 for d in result.days)
     assert client.asked_models[:5] == list(models.values())
     calls = conn.execute("SELECT COUNT(*), SUM(parse_error IS NULL), SUM(cost_usd) FROM llm_calls").fetchone()
-    assert calls == (25, 25, 0.0)
+    assert calls == (50, 50, 0.0)  # 하루 어획 5 + 일기 5
     conn.close()
 
 
@@ -383,9 +392,11 @@ def test_bad_answers_do_nothing_and_never_crash(tmp_path):
     result = go()
     assert len(result.days) == 2
     assert all(d.total_catch == 0 for d in result.days)
-    errors = conn.execute("SELECT COUNT(*) FROM actions WHERE parse_error LIKE '두 번 모두%'").fetchone()
-    assert errors == (10,)
-    assert conn.execute("SELECT COUNT(*) FROM llm_calls WHERE parse_error IS NOT NULL").fetchone() == (20,)
+    errors = conn.execute(
+        "SELECT phase, COUNT(*) FROM actions WHERE parse_error LIKE '두 번 모두%' GROUP BY phase ORDER BY phase"
+    ).fetchall()
+    assert errors == [("diary", 10), ("fish", 10)]
+    assert conn.execute("SELECT COUNT(*) FROM llm_calls WHERE parse_error IS NOT NULL").fetchone() == (40,)
     assert conn.execute("SELECT status FROM runs").fetchone() == ("days",)
     conn.close()
 
@@ -393,7 +404,7 @@ def test_bad_answers_do_nothing_and_never_crash(tmp_path):
 def test_server_dying_mid_run_stops_cleanly_with_error_status(tmp_path):
     down = APIConnectionError(request=None)
     models = {i: "qwen2.5:7b" for i in IDS}
-    conn, _, go = _llm_run(tmp_path, [FISH10] * 5 + [down] * 2, models)
+    conn, _, go = _llm_run(tmp_path, [FISH10] * 10 + [down] * 2, models)  # 1일째 어획·일기 뒤 꺼짐
     with pytest.raises(llm.LLMUnavailable):
         go()
     assert conn.execute("SELECT status FROM runs").fetchone() == ("error",)
@@ -433,12 +444,97 @@ def test_main_llm_mixed_village_end_to_end(tmp_path, monkeypatch, capsys):
     ])
     out = capsys.readouterr().out
     assert code == 0
-    assert "3qwen2.5:7b+2gemma3:4b" in out and "LLM 호출 10번" in out
+    assert "3qwen2.5:7b+2gemma3:4b" in out and "LLM 호출 20번" in out
+    assert "질문지 길이" in out
     (db,) = tmp_path.glob("*_llm-mixed_s1.db")
     conn = sqlite3.connect(db)
     assert conn.execute("SELECT condition, model, status FROM runs").fetchone() == (
         "llm-mixed", "3qwen2.5:7b+2gemma3:4b", "days",
     )
-    models = [m for (m,) in conn.execute("SELECT model FROM llm_calls WHERE day = 1 ORDER BY rowid")]
+    models = [m for (m,) in conn.execute("SELECT model FROM llm_calls WHERE day = 1 AND phase = 'fish' ORDER BY rowid")]
     assert models == ["qwen2.5:7b", "gemma3:4b", "qwen2.5:7b", "gemma3:4b", "qwen2.5:7b"]
+    conn.close()
+
+
+# ---------------------------------------------------------------- 기억 + 일기 (P5)
+
+DIARY = (
+    '{"summary": "' + "연못을 나눠 쓰고 있다. " * 40 + '", '
+    '"beliefs": {"estimated_stock": 90, "confidence": 0.7, "sustainable_guess": 10}, '
+    '"trust": {"어부2": 0.8, "어부3": 0.6}}'
+)
+
+
+def test_bot_village_writes_no_diary_and_memory_is_still_kept():
+    world = make_world()
+    result = run(world, all_bots(CooperativeBot), seed=1, days=3)
+    assert all(d.diaries == [] for d in result.days)
+    a = world.get_agent("a1")
+    assert [m.day for m in a.memory] == [1, 2, 3] and a.beliefs is None
+
+
+def test_diary_updates_beliefs_and_is_logged(tmp_path):
+    models = {i: "qwen2.5:7b" for i in IDS}
+    conn, _, go = _llm_run(tmp_path, [FISH10], models, days=2, diary=DIARY)
+    result = go()
+    assert len(result.days[0].diaries) == 5
+    beliefs, trust = conn.execute(
+        "SELECT beliefs_json, trust_json FROM agent_days WHERE day = 1 AND agent_id = 'a1'"
+    ).fetchone()
+    assert '"estimated_stock": 90' in beliefs and '"a2": 0.8' in trust
+    row = conn.execute("SELECT action_json, clamped FROM actions WHERE phase = 'diary' AND day = 1 LIMIT 1").fetchone()
+    assert "연못을 나눠" in row[0] and row[1] == 1  # 요약이 300자를 넘어 잘렸다
+    conn.close()
+
+
+def test_second_morning_prompt_has_yesterday_and_summary(tmp_path):
+    models = {i: "qwen2.5:7b" for i in IDS}
+    conn, _, go = _llm_run(tmp_path, [FISH10], models, days=2, diary=DIARY)
+    go()
+    (day1,) = conn.execute("SELECT prompt FROM llm_calls WHERE day = 1 AND phase = 'fish' LIMIT 1").fetchone()
+    (day2,) = conn.execute("SELECT prompt FROM llm_calls WHERE day = 2 AND phase = 'fish' LIMIT 1").fetchone()
+    assert "최근 기록" not in day1
+    for piece in ["1일째: 아침 추정치", "10마리를 원했고 10마리를 잡았다", "지금까지의 요약", "약 90마리"]:
+        assert piece in day2, piece
+    conn.close()
+
+
+def test_departed_fisher_writes_no_diary():
+    class Silent(BaseAgent):
+        def decide_fish(self, obs):
+            return {"action": "fish", "amount": 0, "reason": "쉼"}
+
+        def write_diary(self, ctx):
+            return {"summary": "s", "beliefs": {"estimated_stock": 1, "confidence": 0, "sustainable_guess": 1}}
+
+    world = make_world(economy={"start_money": 0, "bankrupt_after_days": 1})
+    result = run(world, {i: Silent(i) for i in IDS}, seed=1, days=2)
+    assert result.end_reason == END_ALL_LEFT
+    assert result.days[0].diaries == []  # 1일째 모두 떠나 일기를 쓸 사람이 없다
+
+
+def test_prompt_length_stops_growing_over_ten_days(tmp_path):
+    """P5 완료 기준: 10일 실행에서 질문지 길이(프롬프트 토큰)가 날마다 계속 늘지 않는다.
+
+    가짜 모델이 늘 10마리 + 같은 일기로 답해 연못이 무너지지 않는다. 토큰 대신 보낸 글자 수를 센다.
+    """
+    models = {i: "qwen2.5:7b" for i in IDS}
+    config = llm_config()
+    world = World.from_config(config)
+    conn = open_db(tmp_path / "len.db")
+    logger = RunLogger.start(conn, "r", config_name="t", condition="llm", seed=1, model="qwen2.5:7b")
+    client = FakeOllama([FISH10], diary=DIARY)
+    client.prompt_chars = True
+    caller = llm.LLMCaller(client=client, meter=llm.CostMeter(1.0), record=logger.log_llm_call)
+    result = run(world, build_llm_agents(config, caller, models), seed=1, days=10, logger=logger)
+    assert result.end_reason == END_DAYS and len(result.days) == 10
+
+    for phase in ("fish", "diary"):
+        per_day = [m for (m,) in conn.execute(
+            "SELECT MAX(prompt_tokens) FROM llm_calls WHERE phase = ? GROUP BY day ORDER BY day", (phase,)
+        )]
+        assert len(per_day) == 10
+        assert per_day[3] > per_day[0]  # 기억이 붙어 1일째보다는 길다
+        settled = per_day[3:]  # 4일째부터: 원본 2일 + 요약 1개가 다 찬 뒤
+        assert max(settled) - min(settled) <= 10, (phase, per_day)  # 숫자 자릿수 차이만
     conn.close()

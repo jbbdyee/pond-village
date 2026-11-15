@@ -11,6 +11,7 @@
 저장된 내용 보기:
     uv run python -m pondvillage.logger runs/<파일>.db            # 실행 목록 (하나뿐이면 날짜별 표까지)
     uv run python -m pondvillage.logger runs/<파일>.db --run <run_id>
+    uv run python -m pondvillage.logger runs/<파일>.db --tokens   # 날짜별 질문지 길이(프롬프트 토큰)
 """
 
 from __future__ import annotations
@@ -34,6 +35,7 @@ STATUS_ABORTED_COST = "aborted_cost"  # 비용 상한을 넘어 멈춤 (SPEC 8�
 
 PHASE_FISH = "fish"  # 어획 페이즈 첫 답
 PHASE_FISH_AFTER_INSPECT = "fish_after_inspect"  # 연못을 확인한 뒤 다시 고른 답
+PHASE_DIARY = "diary"  # 저녁 일기 (P5)
 
 # SPEC 7장. messages의 from/to는 SQL 예약어라 따옴표로 감싼다.
 SCHEMA = """
@@ -195,6 +197,19 @@ class RunLogger:
                         d.reason, d.parse_error, int(d.clamped),
                     ),
                 )
+        # 일기: 검사한 내용을 action_json에 (실패면 빈 dict + parse_error). 믿음·신뢰는 위 agent_days에도 있다.
+        for entry in result.diaries:
+            body = {} if entry.parse_error else {
+                "summary": entry.summary,
+                "beliefs": asdict(entry.beliefs) if entry.beliefs else None,
+                "trust": entry.trust,
+            }
+            self.conn.execute(
+                "INSERT INTO actions (run_id, day, phase, agent_id, action_json, reason, parse_error, clamped)"
+                " VALUES (?, ?, ?, ?, ?, NULL, ?, ?)",
+                (rid, day, PHASE_DIARY, entry.agent_id, json.dumps(body, ensure_ascii=False),
+                 entry.parse_error, int(entry.clamped)),
+            )
         self.conn.commit()
 
     def log_llm_call(self, rec: CallRecord) -> None:
@@ -255,10 +270,54 @@ def format_run_days(conn: sqlite3.Connection, run_id: str) -> str:
     return _table(rows)
 
 
+TOKEN_PHASES = ((PHASE_FISH, "어획"), (PHASE_DIARY, "일기"))
+
+
+def format_tokens(rows: list[tuple[int, str, int | None]]) -> str:
+    """(날, 단계, 프롬프트 토큰) 목록 → 날짜별 단계별 평균·최대 표.
+
+    P5 완료 기준 확인용: 기억이 붙어도 질문지 길이가 며칠 뒤 평평해져야 한다.
+    해석 실패로 다시 물은 호출(앞 답이 붙어 길다)과 연못 확인 뒤 다시 물은 호출은 빼고 첫 질문만 본다.
+    """
+    by: dict[tuple[int, str], list[int]] = {}
+    for day, phase, tokens in rows:
+        if tokens is None:
+            continue
+        by.setdefault((day, phase), []).append(tokens)
+    days = sorted({d for d, _ in by})
+    header = ["날"]
+    for _, label in TOKEN_PHASES:
+        header += [f"{label} 평균", f"{label} 최대"]
+    table = [header]
+    for d in days:
+        row = [str(d)]
+        for phase, _ in TOKEN_PHASES:
+            vals = by.get((d, phase))
+            row += [f"{sum(vals) / len(vals):.0f}", str(max(vals))] if vals else ["-", "-"]
+        table.append(row)
+    return _table(table)
+
+
+def token_rows(conn: sqlite3.Connection, run_id: str) -> list[tuple[int, str, int | None]]:
+    """llm_calls에서 첫 질문만 고른다. 다시 물은 호출은 보낸 질문에 앞 답(assistant)이 들어 있다."""
+    rows = []
+    for day, phase, tokens, prompt in conn.execute(
+        "SELECT day, phase, prompt_tokens, prompt FROM llm_calls WHERE run_id = ? ORDER BY rowid", (run_id,)
+    ):
+        try:
+            roles = [m.get("role") for m in json.loads(prompt or "[]")]
+        except (ValueError, AttributeError):
+            roles = []
+        if "assistant" not in roles:
+            rows.append((day, phase, tokens))
+    return rows
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="runs/*.db에 저장된 실행을 콘솔 표로 본다.")
     parser.add_argument("db", help="DB 파일 경로 (예: runs/20261114-153000_coop_s1.db)")
     parser.add_argument("--run", default=None, help="날짜별 표를 볼 run_id")
+    parser.add_argument("--tokens", action="store_true", help="날짜별 질문지 길이(프롬프트 토큰) 표도 보인다")
     args = parser.parse_args(argv)
 
     path = Path(args.db)
@@ -276,6 +335,9 @@ def main(argv: list[str] | None = None) -> int:
                 return 1
             print(f"\n{run_id}")
             print(format_run_days(conn, run_id))
+            if args.tokens:
+                print("\n질문지 길이 (프롬프트 토큰, 첫 질문만)")
+                print(format_tokens(token_rows(conn, run_id)))
     finally:
         conn.close()
     return 0

@@ -5,7 +5,9 @@
 - 광장: (P6에서 붙임)
 - 어획: 어부 답 → `actions.py` 검사. 연못을 확인한 어부에게는 정확한 재고를 보여 주고 한 번 더 묻는다
 - 정산: `rules.py` 함수를 순서대로 (배분 → 빼기 → 판매·생활비 → 파산 → 붕괴 → 재생)
-- 회의·일기: (일기는 P5, 회의는 3단계에서 붙임)
+- 기억: 정산 뒤 각 어부가 겪은 사실을 기억에 적는다 (`memory.py`, 코드가 적음)
+- 일기: 남은 어부가 저녁 일기를 쓰고(LLM만, 봇은 안 씀), 검사 뒤 요약·믿음·신뢰에 반영한다
+- 회의: (3단계에서 붙임)
 
 실행 예:
     uv run python -m pondvillage.runner --config configs/base.yaml --days 5 --bot greedy
@@ -26,13 +28,13 @@ from pathlib import Path
 from collections import Counter
 from collections.abc import Callable
 
-from pondvillage import llm, rules
+from pondvillage import llm, memory, rules
 from pondvillage.actions import INSPECT, NONE, FishDecision, catch_cap, validate_fish_action
-from pondvillage.agents.base import BaseAgent, Observation
+from pondvillage.agents.base import BaseAgent, DiaryContext, Observation
 from pondvillage.agents.llm_agent import build_llm_agents
 from pondvillage.agents.scripted import CooperativeBot, GreedyBot, RandomBot
 from pondvillage.logger import (
-    STATUS_ABORTED_COST, STATUS_ERROR, RunLogger, make_run_id, make_stamp, open_db,
+    STATUS_ABORTED_COST, STATUS_ERROR, RunLogger, format_tokens, make_run_id, make_stamp, open_db,
 )
 from pondvillage.world import Config, World, load_config
 
@@ -71,6 +73,7 @@ class FishTurn:
     inspected: bool  # 연못을 확인했는지 (그랬다면 decision은 다시 물은 뒤의 답)
     decision: FishDecision  # 최종 어획 결정
     first: FishDecision | None = None  # 확인했다면 첫 답(inspect_pond). 아니면 None
+    exact_stock: int | None = None  # 확인했다면 그때 본 정확한 재고 (기억에 적는다)
 
 
 @dataclass
@@ -89,6 +92,7 @@ class DayResult:
     left: list[str]  # 오늘 마을을 떠난 어부 id
     money: dict[str, int] = field(default_factory=dict)  # 정산 뒤 돈 (모든 어부)
     alive: dict[str, bool] = field(default_factory=dict)
+    diaries: list[memory.DiaryEntry] = field(default_factory=list)  # 오늘 쓴 일기 (봇 마을은 빈 목록)
 
     @property
     def total_catch(self) -> int:
@@ -115,6 +119,7 @@ def _fish_phase(world: World, agents: dict[str, BaseAgent], estimate: int, yeste
             money=agent.money,
             stock_estimate=estimate,
             yesterday_total_catch=yesterday,
+            memory=memory.memory_text(agent, world.day - 1),
         )
         first = validate_fish_action(brain.decide_fish(obs), catch_cap(economy, inspected=False))
         if first.kind != INSPECT:
@@ -125,7 +130,7 @@ def _fish_phase(world: World, agents: dict[str, BaseAgent], estimate: int, yeste
         second = validate_fish_action(
             brain.decide_fish(again), catch_cap(economy, inspected=True), allow_inspect=False
         )
-        turns.append(FishTurn(agent.id, inspected=True, decision=second, first=first))
+        turns.append(FishTurn(agent.id, inspected=True, decision=second, first=first, exact_stock=again.exact_stock))
     return turns
 
 
@@ -154,6 +159,12 @@ def run_day(
     collapsed = rules.check_collapse(world)
     rules.regenerate(world)
 
+    # 5. 기억 적기 (오늘 물어본 어부 전원, 오늘 떠난 어부 포함)
+    _remember_day(world, turns, catches, estimate, yesterday_total, left)
+
+    # 6. 일기 (남은 어부만. 붕괴한 날·마지막 날에도 써서 믿음이 매일 기록되게 한다)
+    diaries = _diary_phase(world, agents)
+
     return DayResult(
         day=world.day,
         stock_start=stock_start,
@@ -167,7 +178,55 @@ def run_day(
         left=left,
         money={a.id: a.money for a in world.agents},
         alive={a.id: a.alive for a in world.agents},
+        diaries=diaries,
     )
+
+
+def _remember_day(
+    world: World,
+    turns: list[FishTurn],
+    catches: dict[str, int],
+    estimate: int,
+    yesterday: int | None,
+    left: list[str],
+) -> None:
+    eco = world.config.economy
+    left_names = [world.get_agent(i).name for i in left]
+    for t in turns:
+        agent = world.get_agent(t.agent_id)
+        caught = catches.get(t.agent_id, 0)
+        text = memory.describe_day(
+            world.day, estimate, yesterday,
+            kind=t.decision.kind, amount=t.decision.amount, caught=caught,
+            exact_stock=t.exact_stock, parse_error=t.decision.parse_error is not None,
+            earned=caught * eco.fish_price, cost=eco.daily_cost, money=agent.money,
+            left_names=[n for n in left_names if n != agent.name],
+        )
+        memory.remember(agent, world.day, text)
+
+
+def _diary_phase(world: World, agents: dict[str, BaseAgent]) -> list[memory.DiaryEntry]:
+    alive = world.alive_agents()
+    name_to_id = {a.name: a.id for a in world.agents}
+    entries: list[memory.DiaryEntry] = []
+    for agent in alive:
+        ctx = DiaryContext(
+            day=world.day,
+            agent_id=agent.id,
+            money=agent.money,
+            memory=memory.memory_text(agent, world.day),
+            neighbors=tuple(a.name for a in alive if a.id != agent.id),
+        )
+        raw = agents[agent.id].write_diary(ctx)
+        if raw is None:  # 봇
+            continue
+        entry = memory.validate_diary(
+            raw, agent.id, name_to_id,
+            capacity=world.config.pond.capacity, max_catch=world.config.economy.max_catch_per_day,
+        )
+        memory.apply_diary(agent, world.day, entry)
+        entries.append(entry)
+    return entries
 
 
 def run(
@@ -478,6 +537,9 @@ def _main_llm(args: argparse.Namespace, config: Config, config_name: str, stamp:
         f"\nLLM 호출 {len(calls)}번 · 해석 실패 {failed}번 · 평균 {avg_ms / 1000:.1f}초"
         f" · 비용 {sum(c.cost_usd for c in calls):.4f} USD"
     )
+    first_asks = [(c.day, c.phase, c.prompt_tokens) for c in calls if '"role": "assistant"' not in c.prompt]
+    print("\n질문지 길이 (프롬프트 토큰, 첫 질문만)")
+    print(format_tokens(first_asks))
     if conn is not None:
         print(f"저장: {db_path}")
     return 0

@@ -132,3 +132,53 @@ def _raw_base():
     import yaml
 
     return yaml.safe_load(BASE_YAML.read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------- 기억 + 일기 (P5)
+
+from pondvillage.agents.base import DiaryContext  # noqa: E402
+from pondvillage.agents.llm_agent import diary_system_prompt  # noqa: E402
+
+
+def diary_ctx(**kw):
+    base = dict(day=3, agent_id="agent_01", money=22, memory="[최근 기록]\n3일째: 기록\n", neighbors=("순자", "영철"))
+    base.update(kw)
+    return DiaryContext(**base)
+
+
+def test_memory_block_goes_between_name_and_today():
+    caller = FakeCaller()
+    LLMAgent("agent_01", "만석", "m", CONFIG, caller).decide_fish(obs(memory="[최근 기록]\n2일째: 기록\n"))
+    text = user_text(caller)
+    assert text.index("만석") < text.index("2일째: 기록") < text.index("오늘은 3일째")
+
+
+def test_first_morning_prompt_is_same_as_before_memory():
+    caller = FakeCaller()
+    LLMAgent("agent_01", "만석", "m", CONFIG, caller).decide_fish(obs())
+    assert user_text(caller).startswith("너의 이름은 만석.\n오늘은 3일째다.")
+
+
+def test_diary_prompt_has_rules_schema_and_hides_answers():
+    text = diary_system_prompt(CONFIG)
+    for piece in ["최대 100마리", "summary", "estimated_stock", "sustainable_guess", "trust", "300자"]:
+        assert piece in text, piece
+    rest = text.replace("300자", "")  # 요약 글자 수 상한은 괜찮다
+    assert "50" not in rest and "30" not in rest  # 지속 가능한 양·전체 일수는 숨긴다
+
+
+def test_diary_asks_own_model_with_memory_and_neighbors():
+    caller = FakeCaller(data={"summary": "s", "beliefs": {}})
+    reply = LLMAgent("agent_01", "만석", "gemma3:4b", CONFIG, caller).write_diary(diary_ctx())
+    asked = caller.asked[-1]
+    assert (asked["model"], asked["phase"], asked["day"]) == ("gemma3:4b", "diary", 3)
+    text = user_text(caller)
+    for piece in ["만석", "3일째", "3일째: 기록", "22원", "순자, 영철"]:
+        assert piece in text, piece
+    assert reply == {"summary": "s", "beliefs": {}}
+
+
+def test_diary_parse_failure_is_passed_on():
+    caller = FakeCaller(parse_error="두 번 모두 해석 실패")
+    reply = LLMAgent("agent_01", "만석", "m", CONFIG, caller).write_diary(diary_ctx())
+    assert reply == {PARSE_ERROR_KEY: "두 번 모두 해석 실패"}

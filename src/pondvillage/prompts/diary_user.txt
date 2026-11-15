@@ -1,0 +1,5 @@
+너의 이름은 {name}.{persona_line}
+오늘은 {day}일째, 하루가 끝났다.
+{memory_block}내 돈: {money}원.
+이웃: {neighbors}.
+일기를 JSON으로 써라. summary는 이전 요약에 오늘 일을 더해 {summary_max}자 이내로 새로 써라.
