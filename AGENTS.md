@@ -1,7 +1,7 @@
 # 연못마을 (Pond Village) 작업 지침 (Codex·Claude 공통)
 
 LLM 에이전트 5명이 공동 연못 하나를 나눠 쓰는 어촌 마을 시뮬레이션.
-1단계: 공유 자원을 지키는가(공유지의 비극) → 2단계: 거짓 소문이 자원 행동을 바꾸는가.
+1단계: 회사가 다른 AI 모델은 공유 자원을 다르게 쓰는가, 섞이면 달라지는가(모델 마을) → 2단계: 거짓 소문이 자원 행동을 바꾸는가.
 
 작업 전에 반드시 읽을 문서:
 - `docs/SPEC.md` — 월드·규칙·데이터 구조 (규칙의 정답지)
@@ -13,7 +13,7 @@ LLM 에이전트 5명이 공동 연못 하나를 나눠 쓰는 어촌 마을 시
 - Python 3.11+, 패키지 관리는 `uv`
 - LLM: OpenAI 호환 API 하나로 통일 (`openai` 패키지)
   - 개발: Ollama 로컬 (`http://localhost:11434/v1`)
-  - 본 실험: 저가 유료 모델 (OpenRouter 등) — `base_url`과 `model`만 바꿈
+  - 본 실험: 회사별 저가 유료 모델 4~5개 (OpenRouter 등) — `base_url`과 어부별 `model`만 바꿈
 - 저장: SQLite (`runs/*.db`)
 - 설정: YAML (`configs/`)
 - 대시보드: 게임풍 HTML 한 장 (`dashboard/village.html` 틀 + `export.py`가 기록을 넣어 `runs/village.html` 생성. 서버·새 라이브러리 없음)

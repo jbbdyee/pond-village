@@ -2,7 +2,7 @@
 
 실행 결과를 `runs/*.db` 파일 하나(SQLite)에 남긴다. 표 모양은 SPEC 7장 그대로다.
 - 이번에 채우는 표: runs(실행 소개), days(날마다 연못), agent_days(날마다 어부), actions(어부가 고른 행동)
-- 빈 표만 만들어 두는 것: messages(P6 대화), votes(P8 투표), llm_calls(P4 LLM 호출)
+- 빈 표만 만들어 두는 것: messages(P6 대화), votes(3단계 투표), llm_calls(P4 LLM 호출)
 
 기록원은 판정하지 않는다. 러너가 넘겨준 하루 결과(`DayResult`)를 표 칸에 옮겨 적기만 한다.
 하루가 끝날 때마다 저장을 확정(commit)하므로, 중간에 멈춰도 그날까지는 남는다.
@@ -164,7 +164,7 @@ class RunLogger:
             " VALUES (?, ?, ?, ?, ?, ?)",
             (rid, day, result.stock_start, result.stock_end, result.total_catch, int(result.collapsed)),
         )
-        # 떠난 어부도 남긴다 (화면에서 "떠남"으로 보이게). 규칙 투표(P8) 전에는 어길 규칙이 없어 violated = 0.
+        # 떠난 어부도 남긴다 (화면에서 "떠남"으로 보이게). 규칙 투표(3단계) 전에는 어길 규칙이 없어 violated = 0.
         for agent in world.agents:
             beliefs = json.dumps(asdict(agent.beliefs), ensure_ascii=False) if agent.beliefs else None
             trust = json.dumps(agent.trust, ensure_ascii=False) if agent.trust else None

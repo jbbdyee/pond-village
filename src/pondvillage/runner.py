@@ -5,7 +5,7 @@
 - 광장: (P6에서 붙임)
 - 어획: 어부 답 → `actions.py` 검사. 연못을 확인한 어부에게는 정확한 재고를 보여 주고 한 번 더 묻는다
 - 정산: `rules.py` 함수를 순서대로 (배분 → 빼기 → 판매·생활비 → 파산 → 붕괴 → 재생)
-- 회의·일기: (P5·P8에서 붙임)
+- 회의·일기: (일기는 P5, 회의는 3단계에서 붙임)
 
 실행 예:
     uv run python -m pondvillage.runner --config configs/base.yaml --days 5 --bot greedy

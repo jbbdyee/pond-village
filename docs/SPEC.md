@@ -35,7 +35,8 @@
 Agent:
   id: str
   name: str
-  persona: str          # 한두 문장 (예: "가족이 많아 돈이 급한 어부")
+  persona: str          # 한두 문장 (예: "가족이 많아 돈이 급한 어부"). 1단계에서는 프롬프트에 넣지 않는다
+  model: str | None     # 이 어부를 움직이는 LLM. 비우면 llm.model(기본 모델)
   money: int
   alive: bool
   debt_days: int        # 돈 < 0 연속 일수
@@ -54,6 +55,8 @@ Beliefs:
 ```
 
 - 페르소나 5개는 `configs/base.yaml`에 고정한다. 조건 간 비교를 위해 실험 내내 같은 페르소나를 쓴다.
+- 페르소나를 프롬프트에 넣을지는 설정 `persona_enabled`로 정한다. 1단계(모델 마을)는 `false`: 이름만 준다. 차이가 나면 모델 차이라고 말하기 위해서다 (2026-11-15).
+- 어부마다 다른 모델을 쓸 수 있다. 마을 구성(같은 모델 / 섞인 / 한 명만 다른)은 실험 설정 파일(`configs/exp1_*.yaml`)에서 어부별 `model`로 정한다. 어떤 어부가 어떤 모델이었는지는 `llm_calls`의 `agent_id`·`model`과 `runs.model`(마을 구성 이름)로 남는다.
 
 ## 3. 하루 진행 (페이즈)
 
@@ -65,7 +68,7 @@ LLM 호출: 에이전트당 하루 **3회** (광장, 어획, 일기). 투표가 
 | 2 | 광장 | 각자 `say` 1회 (전체 공개 or 1명에게 귓속말). 순서는 매일 시드로 섞음 | ✓ |
 | 3 | 어획 | 각자 비공개로 `fish(amount)` 또는 `inspect_pond` 선택 | ✓ |
 | 4 | 정산 | 규칙 엔진: 어획 배분 → 판매 → 생활비 → 파산 판정 → 붕괴 판정 → 재생 | ✗ |
-| 5 | 회의 | (조건 C만) 3일마다 규칙 제안·투표 | ✓ |
+| 5 | 회의 | (3단계 자치 조건만) 3일마다 규칙 제안·투표 | ✓ |
 | 6 | 일기 | 오늘 요약 + `beliefs`, `trust` 갱신 (JSON) | ✓ |
 
 ### 어획 배분 규칙
@@ -117,7 +120,7 @@ rumor:
 
 | 테이블 | 주요 컬럼 |
 |---|---|
-| `runs` | run_id, config_name, condition, seed, model, started_at, status |
+| `runs` | run_id, config_name, condition, seed, model, started_at, status (`model`: 같은 모델 마을이면 모델 이름, 섞이면 구성 이름 예: `mixed`, `4qwen+1gemma`) |
 | `days` | run_id, day, stock_start, stock_end, total_catch, collapsed |
 | `agent_days` | run_id, day, agent_id, money, alive, catch, violated, beliefs_json, trust_json |
 | `messages` | run_id, day, from, to, text, is_rumor |
