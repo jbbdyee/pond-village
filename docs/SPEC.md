@@ -115,7 +115,16 @@ LLM은 반드시 아래 JSON 하나로 답한다.
 - 지난 일기의 `beliefs`는 다음 날 프롬프트에 한 줄로 넣는다. `trust`는 대화를 켠 마을에서만 프롬프트(광장·어획·일기)에 한 줄로 넣는다(남은 이웃만). 대화를 끈 마을은 이웃에 대해 알 길이 없어 기록만 한다 (P6)
 - 2단계 소문은 기억에 `"[소문] <내용> (출처: <누구>)"` 형태로 들어간다
 
-## 6. 소문 (2단계)
+## 6. 틀린 말과 소문 (2단계)
+
+### 틀린 말 판정 (2026-11-17 사용자 승인)
+- 판정 대상은 넣은 소문만이 아니라 **모든 광장 말**(`messages`)이다. 혼잣말(`to = "self"`)도 판정하지만 아무도 듣지 않으므로 확산은 없다.
+- 1차: 코드가 말 속 숫자 주장을 뽑아 기록과 견준다. 예: "어제 모두 15마리" ↔ 전날 `agent_days.catch`, "어제 마을 전체 N마리" ↔ 전날 `days.total_catch`, "연못에 N마리" ↔ 그날 `days.stock_start`. 어림말("15마리 정도")은 ±2마리까지 맞은 것으로 본다(시작값, P8.5에서 조정).
+- 2차: 코드가 못 가린 애매한 말만 저가 LLM 판정 1회. 판정도 `llm_calls`(phase=judge)에 남는다.
+- 출처: 틀린 말을 한 어부의 그날 질문지(`llm_calls.prompt`)에 같은 숫자가 일기 요약·사실 기억으로 있었으면 `memory`, 없으면 `improvised`.
+- 판정은 기록만 한다. 어부의 말·기억을 고치지 않고, 규칙 엔진에도 영향을 주지 않는다.
+
+### 넣은 소문 (비교 조건 R1)
 
 ```yaml
 rumor:
@@ -125,7 +134,7 @@ rumor:
   truth: false          # 실제 상태와 맞는지
 ```
 - 주입은 해당 에이전트의 아침 기억에 "누군가에게 들은 말"로 넣는다.
-- 확산 추적: 모든 `say` 메시지에 대해 소문 관련 여부를 판정한다.
+- 확산 추적: 모든 `say` 메시지에 대해 소문 관련 여부를 판정한다. 위 틀린 말 판정과 같은 판정기를 쓴다.
   - 1차: 키워드 매칭 (`바닥`, `고갈`, `사라`)
   - 2차: 애매하면 저가 LLM 판정 호출 1회 (판정 결과도 로그)
 
@@ -139,6 +148,7 @@ rumor:
 | `messages` | run_id, day, from, to, text, is_rumor (to: `all` / 받는 어부 id / `self` = 혼잣말) |
 | `actions` | run_id, day, phase, agent_id, action_json, reason, parse_error, clamped |
 | `votes` | run_id, day, proposal_id, agent_id, vote |
+| `claims` | run_id, day, message_id, agent_id, kind, claimed, actual, is_false, source, judged_by (말 속 숫자 주장 하나마다 한 줄. `kind`: 어제 개인 어획 / 어제 마을 어획 / 연못 재고 등, `source`: `memory`·`improvised`, `judged_by`: `code`·`llm`. 2026-11-17 추가, P8.5부터) |
 | `llm_calls` | run_id, day, agent_id, phase, model, prompt_tokens, completion_tokens, latency_ms, cost_usd, prompt, response, parse_error (호출 한 번마다 한 줄. 해석에 실패해 다시 물은 호출도 따로 남는다. 2026-11-15 prompt·response·parse_error 추가) |
 
 ## 8. 종료 조건
