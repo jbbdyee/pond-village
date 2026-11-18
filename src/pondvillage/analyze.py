@@ -247,6 +247,48 @@ def mixing_effect(stats: dict[tuple[str, str], ModelStats]) -> list[dict]:
     return rows
 
 
+EARLY_DAYS = 3  # 공정 비교: 거의 모든 마을이 살아 있는 앞쪽 날만
+
+
+def early_requests(runs: list[RunData], last_day: int = EARLY_DAYS) -> dict[tuple[str, str], list[list[int]]]:
+    """(모델, 자리)마다 1~last_day일째 요청을 날짜별로 따로 모은다. out[key][d-1] = 그날 어부들의 요청 목록.
+
+    전체 평균은 오래 버틴 마을일수록 조용한 날이 섞여 낮아진다(생존 편향). 날짜를 맞춰 같은 날끼리만 견준다.
+    그날 기록이 있는 어부(살아 있던 어부)만 들어가므로 목록 길이가 그날의 n이다.
+    """
+    out: dict[tuple[str, str], list[list[int]]] = defaultdict(lambda: [[] for _ in range(last_day)])
+    for r in runs:
+        for f in r.fish:
+            if 1 <= f["day"] <= last_day:
+                out[(r.models.get(f["agent"], "?"), role(r, f["agent"]))][f["day"] - 1].append(f["amount"])
+    return dict(out)
+
+
+def _sd(xs: list[float]) -> float:
+    """표본 표준편차. 2개 미만이면 0."""
+    if len(xs) < 2:
+        return 0.0
+    m = sum(xs) / len(xs)
+    return (sum((x - m) ** 2 for x in xs) / (len(xs) - 1)) ** 0.5
+
+
+SEED_STEPS = (3, 5, 10)
+
+
+def seed_stability(metrics: list[RunMetrics], steps: tuple[int, ...] = SEED_STEPS) -> list[dict]:
+    """마을마다 시드를 앞에서 k개만 썼을 때 1일째 총요청 평균·표준편차와 붕괴 비율. 시드가 k개 미만이면 그 칸은 없음."""
+    rows = []
+    for v in sorted({m.village for m in metrics}, key=_village_sort):
+        ms = sorted((m for m in metrics if m.village == v), key=lambda m: m.seed)
+        for k in steps:
+            if len(ms) < k:
+                continue
+            day1 = [float(m.day1_request) for m in ms[:k]]
+            rows.append({"village": v, "k": k, "mean": _mean(day1), "sd": _sd(day1),
+                         "collapsed": sum(m.collapsed for m in ms[:k])})
+    return rows
+
+
 def stock_series(r: RunData, length: int) -> list[float | None]:
     """날짜별 저녁 재고. 붕괴한 뒤 날은 0 (연못은 되살아나지 않는다). 기록이 없는 날은 None."""
     by_day = {d["day"]: d["stock_end"] for d in r.days}
@@ -319,6 +361,25 @@ def mixing_table(rows: list[dict]) -> list[list[str]]:
     out = [["모델", "섞인 자리", "같은 모델 마을 평균 요청", "섞인 자리 평균 요청", "차이"]]
     for r in rows:
         out.append([r["model"], PLACE_LABELS[r["place"]], f"{r['S']:.1f}", f"{r['mixed']:.1f}", f"{r['diff']:+.1f}"])
+    return out
+
+
+def early_table(early: dict[tuple[str, str], list[list[int]]]) -> list[list[str]]:
+    head = ["모델", "자리"] + [f"{d}일째 평균 요청 (n)" for d in range(1, EARLY_DAYS + 1)] + [f"1~{EARLY_DAYS}일 평균 (n)"]
+    rows = [head]
+    keys = sorted(early, key=lambda k: (k[0], PLACE_ORDER.index(k[1]) if k[1] in PLACE_ORDER else 99))
+    for model, place in keys:
+        per_day = early[(model, place)]
+        cells = [f"{_mean(xs):.1f} ({len(xs)})" if xs else "- (0)" for xs in per_day]
+        allx = [x for xs in per_day for x in xs]
+        rows.append([model, PLACE_LABELS.get(place, place), *cells, f"{_mean(allx):.1f} ({len(allx)})"])
+    return rows
+
+
+def stability_table(rows_in: list[dict]) -> list[list[str]]:
+    out = [["마을", "시드 수", "1일째 총요청 평균", "표준편차", "붕괴"]]
+    for r in rows_in:
+        out.append([r["village"], str(r["k"]), f"{r['mean']:.1f}", f"{r['sd']:.1f}", f"{r['collapsed']}/{r['k']}"])
     return out
 
 
@@ -519,6 +580,11 @@ def render_report(runs: list[RunData], experiment: str) -> str:
 <section><h2>모델별 지표</h2>{html_table(model_table(stats))}
 <p class="muted">'N마리' 말: 말 속에 "N마리"가 들어간 말. 지킴: 그날 내 요청이 말 속 가장 큰 N 이하.
 "어제 15마리를 잡았다"처럼 약속이 아닌 말도 섞이는 어림 지표다.</p></section>
+<section><h2>1~{EARLY_DAYS}일째만 본 모델 비교 (공정 비교)</h2>{html_table(early_table(early_requests(runs)))}
+<p class="muted">위 "평균 요청"은 오래 버틴 마을일수록 조용한 날이 섞여 낮게 나온다. 여기서는 같은 날끼리만 견준다.
+n = 그날 살아 있던 어부-일 수. n이 작은 칸은 믿기 어렵다.</p></section>
+<section><h2>시드 수에 따른 흔들림</h2>{html_table(stability_table(seed_stability(metrics)))}
+<p class="muted">시드를 앞에서 3·5·10개만 썼을 때. 5개와 10개의 평균·붕괴 비율이 비슷하면 시드 5개로도 결론이 크게 바뀌지 않는다.</p></section>
 <section><h2>섞임 효과</h2>{html_table(mixing_table(mix)) if mix else '<p class="muted">비교할 기록이 없다.</p>'}
 <p class="muted">차이 = 섞인 자리 평균 요청 − 같은 모델 마을 평균 요청. 시드 3개라 작은 차이는 우연일 수 있다.</p></section>
 </main></body></html>
@@ -542,6 +608,12 @@ def main(argv: list[str] | None = None) -> int:
     print(markdown(village_table(metrics)))
     print("\n## 모델별\n")
     print(markdown(model_table(stats)))
+    print(f"\n## 1~{EARLY_DAYS}일째만 본 모델 비교 (공정 비교, n = 그날 어부-일 수)\n")
+    print(markdown(early_table(early_requests(runs))))
+    stab = seed_stability(metrics)
+    if stab:
+        print("\n## 시드 수에 따른 흔들림 (1일째 총요청)\n")
+        print(markdown(stability_table(stab)))
     mix = mixing_effect(stats)
     if mix:
         print("\n## 섞임 효과 (평균 요청)\n")

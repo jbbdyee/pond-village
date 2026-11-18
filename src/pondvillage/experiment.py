@@ -110,12 +110,31 @@ def village_config(base_raw: dict, village: Village) -> Config:
     return config_from_dict(raw)
 
 
-def plan(experiments: list[Experiment]) -> list[PlannedRun]:
+def parse_seeds(text: str) -> tuple[int, ...]:
+    """'1-10' 또는 '1,2,5' 또는 '1-3,7' → 시드 목록 (순서대로, 겹치면 하나). 1보다 작거나 모양이 틀리면 ConfigError."""
+    out: list[int] = []
+    try:
+        for part in text.split(","):
+            part = part.strip()
+            if "-" in part:
+                a, b = (int(x) for x in part.split("-", 1))
+                out.extend(range(a, b + 1))
+            elif part:
+                out.append(int(part))
+    except ValueError as e:
+        raise ConfigError(f"시드 모양이 틀렸습니다: {text!r} (예: 1-10, 1,2,5)") from e
+    if not out or min(out) < 1:
+        raise ConfigError(f"시드는 1 이상이어야 합니다: {text!r}")
+    return tuple(dict.fromkeys(out))
+
+
+def plan(experiments: list[Experiment], seeds: tuple[int, ...] | None = None) -> list[PlannedRun]:
+    """마을 × 시드 목록. seeds를 주면 실험 파일의 시드 대신 쓴다 (파일은 그대로)."""
     out: list[PlannedRun] = []
     for exp in experiments:
         for village in exp.villages:
             config = village_config(exp.base_raw, village)
-            for seed in exp.seeds:
+            for seed in seeds or exp.seeds:
                 seats = rotate_models(village.models, seed) if village.rotate else list(village.models)
                 models = {spec.id: seats[i] for i, spec in enumerate(config.agents)}
                 out.append(PlannedRun(exp.name, exp.config_name, village, seed, exp.days, config, models))
@@ -148,7 +167,13 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("files", nargs="*", help="실험 파일 (기본: configs/exp1_*.yaml 전부)")
     parser.add_argument("--runs-dir", default="runs")
     parser.add_argument("--dry-run", action="store_true", help="돌릴 목록과 자리만 보여 주고 끝낸다")
+    parser.add_argument("--seeds", default=None, help="실험 파일의 시드 대신 (예: 1-10, 1,2,5). 끝난 시드는 건너뛴다")
     args = parser.parse_args(argv)
+    try:
+        seeds = parse_seeds(args.seeds) if args.seeds else None
+    except ConfigError as e:
+        print(f"[시작 못 함] {e}")
+        return 1
 
     files = args.files or sorted(str(p) for p in Path("configs").glob("exp1_*.yaml"))
     if not files:
@@ -156,7 +181,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     runs_dir = Path(args.runs_dir)
     runs_dir.mkdir(parents=True, exist_ok=True)
-    planned = plan([load_experiment(f) for f in files])
+    planned = plan([load_experiment(f) for f in files], seeds)
     done = finished_runs(runs_dir)
     todo = [p for p in planned if (p.condition, p.seed) not in done]
 

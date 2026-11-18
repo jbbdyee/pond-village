@@ -59,6 +59,29 @@ def test_stock_claims():
     assert [c.approx for c in cl.extract_claims("연못에 99마리가 있네요")] == [False]
 
 
+def test_guess_reasoned_from_yesterday_catch_is_stock_not_catch():
+    # P9 준비, X-qwen3gemma2 s8: 공지 81을 옮긴 말이 "어제 마을 어획 81"로 잡혀 틀린 말 42개가 됐다
+    assert kinds("오늘은 어제 어획량을 고려해서 물고기가 약 81마리 있을 것 같아요.") == [(cl.KIND_STOCK, 81)]
+    assert kinds("어제 어획량 30마리를 고려하면 81마리 정도는 될 것 같군.") == [(cl.KIND_VILLAGE, 30)]
+    # X s8 3일째, O-gemma4qwen1 s6 6일째: 어획 숫자 뒤의 두 번째 숫자는 재고 짐작
+    assert kinds("오늘은 어제 어획량이 40마리라서 연못에 약 97마리가 있을 것 같아.") == [
+        (cl.KIND_VILLAGE, 40), (cl.KIND_STOCK, 97)]
+    assert kinds("여러분, 어제 어획량이 25마리로 줄어 재고가 85마리 정도로 추정됩니다.") == [
+        (cl.KIND_VILLAGE, 25), (cl.KIND_STOCK, 85)]
+
+
+def test_future_and_hypothetical_numbers_are_not_stock_claims():
+    # P9 준비, S-qwen s10·X-qwen3gemma2 s7: 앞날 계산·가정이 "지어낸 재고"로 잡혔다
+    for text in [
+        "남은 물고기가 83마리니까, 40마리가 남을 거에요.",
+        "그렇다면 2일째에 물고기가 86마리가 될 거에요.",
+        "남은 돈 5원을 연못에 투자해서 물고기 1마리 더 늘리는 것을 목표로 하겠습니다.",
+        "그 돈으로 연못에 6마리 물고기 투자해서 103마리로 만들자.",
+    ]:
+        assert all(c.claimed not in (40, 86, 1, 6, 103) for c in cl.extract_claims(text)), text
+    assert kinds("연못에 40마리가 남아 있어요.") == [(cl.KIND_STOCK, 40)]  # 지금 남은 양은 그대로 잡는다
+
+
 def test_extract_never_crashes():
     assert cl.extract_claims("") == []
     assert cl.extract_claims(None) == []  # type: ignore[arg-type]
@@ -200,3 +223,22 @@ def test_report_sample_and_cli(tmp_path):
 def test_cli_without_talk_runs(tmp_path):
     lg.open_db(tmp_path / "x.db").close()
     assert cl.main(["--runs-dir", str(tmp_path)]) == 1
+
+
+def _res(cond, seed, n_false, solo=False):
+    rows = [cl.ClaimRow("r", 3, i, "agent_01", "all", "약 79마리", cl.KIND_STOCK, 79, "100", 1, cl.SRC_MEMORY, "q")
+            for i in range(n_false)]
+    from collections import Counter
+    return cl.RunResult(f"r{seed}", cond, seed, "q", 10, solo, rows, Counter(), [])
+
+
+def test_false_distribution_buckets_and_top_share():
+    results = [_res("exp1-S-qwen", s, n) for s, n in [(1, 0), (2, 13), (3, 1), (4, 2), (5, 0)]]
+    results += [_res("exp1-solo-qwen", 1, 0, solo=True)]
+    s_qwen, solo = cl.false_distribution(results)
+    assert (s_qwen["runs"], s_qwen["zero"], s_qwen["few"], s_qwen["many"], s_qwen["total"]) == (5, 2, 2, 1, 16)
+    assert (s_qwen["top_seed"], s_qwen["top"]) == (2, 13) and s_qwen["top_share"] == 13 / 16
+    assert solo["solo"] and solo["total"] == 0
+    text = cl.report_markdown(results)
+    assert "마을 종류별 분포" in text and "s2 13개 (81%)" in text
+    assert "전체 16개 중 13개(81%)" in text

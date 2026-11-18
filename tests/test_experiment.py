@@ -339,3 +339,53 @@ def test_analysis_ignores_other_experiments_and_unfinished_runs(tmp_path):
     RunLogger.start(conn, "b", config_name="e", condition="exp1-S-qwen", seed=1, model=Q)  # running
     conn.close()
     assert analyze.collect_runs(tmp_path, "exp1") == []
+
+
+# ---------------------------------------------------------------- P9 준비: 공정 비교·시드 늘리기
+
+
+def _fish(day, agent, amount):
+    return {"day": day, "agent": agent, "inspected": False, "amount": amount, "parse_error": False}
+
+
+def test_early_requests_keep_days_apart_and_drop_day_four_on():
+    # 붕괴한 마을: 1일째 20씩. 버틴 마을: 1일째 10, 2~5일째 2. 전체 평균은 버틴 마을이 유리하지만 같은 날끼리 보면 다르다.
+    crashed = _run(fish=[_fish(1, f"a{i}", 20) for i in range(1, 6)])
+    lasted = _run(fish=[_fish(d, f"a{i}", 10 if d == 1 else 2) for d in range(1, 6) for i in range(1, 6)])
+    early = analyze.early_requests([crashed, lasted])
+    day1, day2, day3 = early[(Q, "S")]
+    assert (len(day1), sum(day1) / len(day1)) == (10, 15)
+    assert (len(day2), len(day3)) == (5, 5)  # 2일째부터는 버틴 마을만 (n이 줄어든 게 보인다)
+    head, row = analyze.early_table(early)
+    assert row[2:] == ["15.0 (10)", "2.0 (5)", "2.0 (5)", "8.5 (20)"]
+
+
+def test_seed_stability_uses_first_k_seeds_only():
+    def m(seed, day1, collapsed):
+        return analyze.RunMetrics("S-qwen", "S", seed, 3, collapsed, 0, 0, 0, day1, 0)
+    ms = [m(s, 50 + 10 * (s - 1), s % 2 == 1) for s in range(1, 6)]  # 50 60 70 80 90
+    rows = analyze.seed_stability(ms)
+    assert [r["k"] for r in rows] == [3, 5]  # 10개 칸은 시드가 모자라 없음
+    assert rows[0]["mean"] == 60 and rows[0]["sd"] == pytest.approx(10) and rows[0]["collapsed"] == 2
+    assert rows[1]["mean"] == 70 and rows[1]["collapsed"] == 3
+
+
+def test_parse_seeds():
+    assert experiment.parse_seeds("1-10") == tuple(range(1, 11))
+    assert experiment.parse_seeds("1,2,5") == (1, 2, 5)
+    assert experiment.parse_seeds("1-3,2,7") == (1, 2, 3, 7)
+    for bad in ("", "a", "0-3", "3-x"):
+        with pytest.raises(ConfigError):
+            experiment.parse_seeds(bad)
+
+
+def test_seeds_option_overrides_file_without_touching_it(tmp_path, capsys):
+    path = _write_exp(tmp_path)
+    before = Path(path).read_text(encoding="utf-8")
+    exp = experiment.load_experiment(path)
+    planned = experiment.plan([exp], (4, 5))
+    assert sorted({p.seed for p in planned}) == [4, 5]
+    assert experiment.main([str(path), "--runs-dir", str(tmp_path / "r"), "--seeds", "1-4", "--dry-run"]) == 0
+    assert "시드 4" in capsys.readouterr().out
+    assert Path(path).read_text(encoding="utf-8") == before
+    assert experiment.main([str(path), "--seeds", "x", "--dry-run"]) == 1
