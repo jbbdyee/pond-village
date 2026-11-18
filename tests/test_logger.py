@@ -36,6 +36,10 @@ SPEC_COLUMNS = {
     "messages": ["run_id", "day", "from", "to", "text", "is_rumor"],
     "actions": ["run_id", "day", "phase", "agent_id", "action_json", "reason", "parse_error", "clamped"],
     "votes": ["run_id", "day", "proposal_id", "agent_id", "vote"],
+    "claims": [
+        "run_id", "day", "message_id", "agent_id", "kind",
+        "claimed", "actual", "is_false", "source", "judged_by",
+    ],
     "llm_calls": [
         "run_id", "day", "agent_id", "phase", "model",
         "prompt_tokens", "completion_tokens", "latency_ms", "cost_usd",

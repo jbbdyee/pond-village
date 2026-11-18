@@ -121,7 +121,12 @@ LLM은 반드시 아래 JSON 하나로 답한다.
 - 판정 대상은 넣은 소문만이 아니라 **모든 광장 말**(`messages`)이다. 혼잣말(`to = "self"`)도 판정하지만 아무도 듣지 않으므로 확산은 없다.
 - 1차: 코드가 말 속 숫자 주장을 뽑아 기록과 견준다. 예: "어제 모두 15마리" ↔ 전날 `agent_days.catch`, "어제 마을 전체 N마리" ↔ 전날 `days.total_catch`, "연못에 N마리" ↔ 그날 `days.stock_start`. 어림말("15마리 정도")은 ±2마리까지 맞은 것으로 본다(시작값, P8.5에서 조정).
 - 2차: 코드가 못 가린 애매한 말만 저가 LLM 판정 1회. 판정도 `llm_calls`(phase=judge)에 남는다.
-- 출처: 틀린 말을 한 어부의 그날 질문지(`llm_calls.prompt`)에 같은 숫자가 일기 요약·사실 기억으로 있었으면 `memory`, 없으면 `improvised`.
+- 출처: 말한 어부의 그날 광장 질문지(`llm_calls.prompt`, phase=say)에서 같은 숫자("N마리")를 찾는다. 앞에서부터 처음 맞는 것 하나:
+  `memory`(일기 요약·지난 일기에 적은 생각·코드가 적은 사실 기억) → `notice`(아침 공지 추정치, 그날·지난날) → `heard`(그날·전날 광장에서 남에게 들은 말) → 어디에도 없으면 `improvised`.
+  단, 연못 재고 주장이 그날 공지 추정치와 같으면 일기에도 있더라도 `notice`. 공지를 들은 말보다 앞에 두는 것은 앞 사람도 같은 공지를 옮겼을 뿐인 경우가 많아서다.
+  `heard`·`notice`는 2026-11-18 P8.5에서 추가(사용자 승인): 공지를 옮긴 말과 남의 말을 따라 한 말을 "지어냄"과 나누려고. `heard`는 퍼짐의 증거다.
+- 연못 재고 주장은 실제 재고(`days.stock_start`)로 틀림을 적되, 아침 공지 추정치와 같은 숫자면 출처가 `notice`라 보고서에서 따로 센다(어부는 들은 대로 말했을 뿐이다).
+- 코드가 누구의 어획인지 못 가린 주장("어제 15마리 잡았으니"처럼 주어 없고 20 이하)은 `kind = yesterday_unclear`로 남기고 판정하지 않는다(P10의 LLM 판정 몫).
 - 판정은 기록만 한다. 어부의 말·기억을 고치지 않고, 규칙 엔진에도 영향을 주지 않는다.
 
 ### 넣은 소문 (비교 조건 R1)
@@ -148,7 +153,7 @@ rumor:
 | `messages` | run_id, day, from, to, text, is_rumor (to: `all` / 받는 어부 id / `self` = 혼잣말) |
 | `actions` | run_id, day, phase, agent_id, action_json, reason, parse_error, clamped |
 | `votes` | run_id, day, proposal_id, agent_id, vote |
-| `claims` | run_id, day, message_id, agent_id, kind, claimed, actual, is_false, source, judged_by (말 속 숫자 주장 하나마다 한 줄. `kind`: 어제 개인 어획 / 어제 마을 어획 / 연못 재고 등, `source`: `memory`·`improvised`, `judged_by`: `code`·`llm`. 2026-11-17 추가, P8.5부터) |
+| `claims` | run_id, day, message_id, agent_id, kind, claimed, actual, is_false, source, judged_by (말 속 숫자 주장 하나마다 한 줄. `kind`: 어제 개인 어획 / 어제 마을 어획 / 연못 재고 등, `source`: `memory`·`heard`·`notice`·`improvised`, `judged_by`: `code`·`llm`. 2026-11-17 추가, P8.5부터. `heard`·`notice`는 2026-11-18 추가) |
 | `llm_calls` | run_id, day, agent_id, phase, model, prompt_tokens, completion_tokens, latency_ms, cost_usd, prompt, response, parse_error (호출 한 번마다 한 줄. 해석에 실패해 다시 물은 호출도 따로 남는다. 2026-11-15 prompt·response·parse_error 추가) |
 
 ## 8. 종료 조건

@@ -4,7 +4,7 @@
 - 채우는 표: runs(실행 소개), days(날마다 연못), agent_days(날마다 어부), actions(어부가 고른 행동),
   messages(광장에서 나온 말, P6. to는 "all" 또는 받는 어부 id),
   llm_calls(LLM 호출 한 번마다: 보낸 질문·받은 답·토큰·시간·비용·해석 실패)
-- 빈 표만 만들어 두는 것: votes(3단계 투표)
+- 빈 표만 만들어 두는 것: votes(3단계 투표), claims(말 속 숫자 주장 판정. 러너가 아니라 `claims.py`가 나중에 채운다, P8.5)
 
 기록원은 판정하지 않는다. 러너가 넘겨준 하루 결과(`DayResult`)를 표 칸에 옮겨 적기만 한다.
 하루가 끝날 때마다 저장을 확정(commit)하므로, 중간에 멈춰도 그날까지는 남는다.
@@ -96,6 +96,18 @@ CREATE TABLE IF NOT EXISTS votes (
     agent_id TEXT NOT NULL,
     vote TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS claims (
+    run_id TEXT NOT NULL,
+    day INTEGER NOT NULL,
+    message_id INTEGER NOT NULL,
+    agent_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    claimed INTEGER NOT NULL,
+    actual TEXT,
+    is_false INTEGER,
+    source TEXT,
+    judged_by TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS llm_calls (
     run_id TEXT NOT NULL,
     day INTEGER,
@@ -112,11 +124,11 @@ CREATE TABLE IF NOT EXISTS llm_calls (
 );
 """
 
-TABLES = ("runs", "days", "agent_days", "messages", "actions", "votes", "llm_calls")
+TABLES = ("runs", "days", "agent_days", "messages", "actions", "votes", "claims", "llm_calls")
 
 
 def open_db(path: str | Path) -> sqlite3.Connection:
-    """DB 파일을 열고(없으면 폴더와 함께 만들고) 표 7개를 준비한다."""
+    """DB 파일을 열고(없으면 폴더와 함께 만들고) 표 8개를 준비한다."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path)
